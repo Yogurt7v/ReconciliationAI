@@ -1,0 +1,18 @@
+{
+  "name": "reconciliation-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-агент для сверки актов сверки с контрагентами (MVP)",
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "samples": "pnpm --filter @recon/backend samples",
+    "prepare-ocr": "pnpm --filter @recon/backend prepare-ocr",
+    "smoke": "pnpm --filter @recon/backend smoke"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

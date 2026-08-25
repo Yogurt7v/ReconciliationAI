@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.tessdata/
+**/samples/*.xlsx
+**/samples/*.pdf
+**/samples/out/
+*.log
+.DS_Store

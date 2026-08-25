@@ -1,0 +1,15 @@
+packages:
+  - shared
+  - backend
+  - frontend
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  tesseract.js: true
+
+# Разрешаем postinstall-скрипты нативных модулей
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - tesseract.js
