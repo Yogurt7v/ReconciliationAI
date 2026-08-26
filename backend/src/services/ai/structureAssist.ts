@@ -127,7 +127,7 @@ export async function assistStructure(grid: Grid): Promise<StructureAssistResult
   const colCount = grid.reduce((m, r) => Math.max(m, r.length), 0);
 
   try {
-    const raw = await requestJson<AiStructureResponse>(
+    const { data: raw } = await requestJson<AiStructureResponse>(
       config,
       SYSTEM_PROMPT,
       { rowCount: Math.min(grid.length, AI_STRUCTURE_SAMPLE_ROWS), totalColumns: colCount, rows: sample },

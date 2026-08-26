@@ -2,10 +2,10 @@
  * Минимальный клиент OpenRouter (OpenAI-совместимый Chat Completions API).
  *
  * Особенности:
- *  - JSON mode: ответ модели обязан быть валидным JSON;
  *  - таймаут на запрос и один повтор при сетевой ошибке/5xx/таймауте;
  *  - деградированный режим: без ключа или при ошибке вызывающий код
- *    откатывается к эвристикам/правилам, а деградация фиксируется в reasoning.
+ *    откатывается к эвристикам/правилам, а деградация фиксируется в reasoning;
+ *  - debug-информация для диагностики на фронтенде.
  */
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -13,6 +13,16 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export interface AiConfig {
   apiKey: string | null;
   model: string;
+}
+
+/** Диагностическая информация о вызове AI */
+export interface AiDebugInfo {
+  model: string;
+  httpStatus: number | null;
+  contentLength: number;
+  errorMessage: string | null;
+  rawPreview: string | null;
+  attempts: number;
 }
 
 /** Конфиг из окружения (читается в момент вызова — удобно для тестов) */
@@ -24,6 +34,8 @@ export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig 
 }
 
 export class AiUnavailableError extends Error {
+  debug?: AiDebugInfo;
+
   constructor(
     message: string,
     readonly detail?: string,
@@ -37,7 +49,7 @@ export class AiUnavailableError extends Error {
   /** Повтор имеет смысл только для «временных» проблем */
   get retryable(): boolean {
     if (this.status === undefined) return true; // сеть/таймаут
-    return this.status >= 500 || this.status === 429;
+    return this.status >= 500;
   }
 }
 
@@ -55,13 +67,19 @@ interface ChatResponse {
   error?: { message?: string };
 }
 
+interface CallResult {
+  content: string;
+  httpStatus: number;
+  errorMessage: string | null;
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 async function callOnce(
   config: AiConfig,
   messages: ChatMessage[],
   timeoutMs: number,
-): Promise<string> {
+): Promise<CallResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -72,16 +90,14 @@ async function callOnce(
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
-        // Заголовки OpenRouter рекомендует для атрибуции
         'HTTP-Referer': 'https://reconciliation-ai.local',
         'X-Title': 'Reconciliation AI Agent',
       },
       body: JSON.stringify({
         model: config.model,
         messages,
-        response_format: { type: 'json_object' },
         temperature: 0,
-        max_tokens: 2000,
+        max_tokens: 4000,
       }),
     });
 
@@ -89,7 +105,6 @@ async function callOnce(
 
     if (!res.ok) {
       const detail = body?.error?.message ?? `HTTP ${res.status}`;
-      // 4xx (кроме 429) — повторять бессмысленно
       throw new AiUnavailableError(
         res.status >= 400 && res.status < 500 && res.status !== 429
           ? 'Модель OpenRouter отклонила запрос'
@@ -99,11 +114,12 @@ async function callOnce(
       );
     }
 
-    const content = body?.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new AiUnavailableError('Пустой ответ модели');
-    }
-    return content;
+    const content = body?.choices?.[0]?.message?.content ?? '';
+    return {
+      content,
+      httpStatus: res.status,
+      errorMessage: body?.error?.message ?? null,
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -112,13 +128,15 @@ async function callOnce(
 /**
  * Запрос с ожиданием JSON-ответа. Таймаут + ровно один повтор
  * при сетевой ошибке/таймауте/5xx/429.
+ *
+ * Возвращает { data, debug } — данные и диагностическая информация.
  */
 export async function requestJson<T>(
   config: AiConfig,
   systemPrompt: string,
   userPayload: unknown,
   timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<T> {
+): Promise<{ data: T; debug: AiDebugInfo }> {
   if (!config.apiKey) {
     throw new AiUnavailableError('OPENROUTER_API_KEY не задан');
   }
@@ -128,22 +146,56 @@ export async function requestJson<T>(
     { role: 'user', content: JSON.stringify(userPayload) },
   ];
 
+  const debug: AiDebugInfo = {
+    model: config.model,
+    httpStatus: null,
+    contentLength: 0,
+    errorMessage: null,
+    rawPreview: null,
+    attempts: 0,
+  };
+
   let lastError: AiUnavailableError | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
+    debug.attempts = attempt + 1;
     try {
-      const content = await callOnce(config, messages, timeoutMs);
+      const result = await callOnce(config, messages, timeoutMs);
+      debug.httpStatus = result.httpStatus;
+      debug.contentLength = result.content.length;
+      debug.errorMessage = result.errorMessage;
+      debug.rawPreview = result.content.slice(0, 500);
+
+      if (!result.content) {
+        throw new AiUnavailableError('Пустой ответ модели');
+      }
+
       try {
-        return JSON.parse(content) as T;
+        const cleaned = result.content
+          .replace(/^```(?:json)?\s*\n?/i, '')
+          .replace(/\n?\s*```\s*$/i, '')
+          .trim();
+        const data = JSON.parse(cleaned) as T;
+        return { data, debug };
       } catch {
-        throw new AiUnavailableError('Ответ модели не является валидным JSON', content.slice(0, 300));
+        throw new AiUnavailableError(
+          'Ответ модели не является валидным JSON',
+          result.content.slice(0, 300),
+        );
       }
     } catch (err) {
       lastError =
         err instanceof AiUnavailableError
           ? err
           : new AiUnavailableError('Сетевая ошибка OpenRouter', String(err));
+      debug.errorMessage = lastError.detail ?? lastError.message;
       if (!lastError.retryable) break;
     }
   }
-  throw lastError ?? new AiUnavailableError('Неизвестная ошибка OpenRouter');
+  if (lastError) {
+    lastError.debug = debug;
+    throw lastError;
+  }
+  const fallback = new AiUnavailableError('Неизвестная ошибка OpenRouter');
+  fallback.debug = debug;
+  throw fallback;
 }

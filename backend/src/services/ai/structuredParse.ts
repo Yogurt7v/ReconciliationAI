@@ -283,7 +283,7 @@ export async function parseTwoSidedPdf(
   if (!pdfText.trim()) return null;
 
   try {
-    const raw = await requestJson<AiStructuredResponse>(
+    const { data: raw } = await requestJson<AiStructuredResponse>(
       config,
       SYSTEM_PROMPT,
       { text: pdfText },

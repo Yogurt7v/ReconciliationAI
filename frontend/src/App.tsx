@@ -7,11 +7,13 @@ import UploadScreen from './screens/UploadScreen';
 import ProgressPanel from './screens/ProgressPanel';
 import ConfirmationScreen from './screens/ConfirmationScreen';
 import ReportScreen from './screens/ReportScreen';
+import TestScreen from './screens/TestScreen';
 import ErrorBanner from './components/ErrorBanner';
 
 type Phase =
   | { kind: 'upload' }
-  | { kind: 'job'; jobId: string };
+  | { kind: 'job'; jobId: string }
+  | { kind: 'test' };
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: 'upload' });
@@ -68,10 +70,34 @@ export default function App() {
     );
   }, [phase]);
 
+  if (phase.kind === 'test') {
+    return (
+      <main className="page">
+        <AppBar activeTab="test" onNavigate={(kind) => {
+          stopPolling();
+          setStatus(null);
+          setError(null);
+          setPhase({ kind });
+        }} />
+        <TestScreen onBack={() => {
+          stopPolling();
+          setStatus(null);
+          setError(null);
+          setPhase({ kind: 'upload' });
+        }} />
+      </main>
+    );
+  }
+
   if (phase.kind === 'upload' || !status) {
     return (
       <main className="page">
-        <AppBar />
+        <AppBar activeTab="main" onNavigate={(kind) => {
+          stopPolling();
+          setStatus(null);
+          setError(null);
+          setPhase({ kind });
+        }} />
         <ErrorBanner message={error} />
         <UploadScreen onUploaded={handleUploaded} onError={setError} />
       </main>
@@ -82,7 +108,12 @@ export default function App() {
 
   return (
     <main className="page">
-      <AppBar />
+      <AppBar activeTab="main" onNavigate={(kind) => {
+        stopPolling();
+        setStatus(null);
+        setError(null);
+        setPhase({ kind });
+      }} />
       <ErrorBanner message={error} />
 
       {status.stage === 'awaiting_confirmation' && status.pendingConfirmation ? (
@@ -111,13 +142,27 @@ export default function App() {
   );
 }
 
-function AppBar() {
+function AppBar({ activeTab, onNavigate }: { activeTab: 'main' | 'test'; onNavigate: (kind: 'upload' | 'test') => void }) {
   return (
     <header className="appbar">
       <span className="appbar-brand">Акты сверки</span>
       <span className="appbar-subtitle">
         Reconciliation AI
       </span>
+      <nav style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--sp-2)' }}>
+        <button
+          className={`btn btn-sm ${activeTab === 'main' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => onNavigate('upload')}
+        >
+          Сверка
+        </button>
+        <button
+          className={`btn btn-sm ${activeTab === 'test' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => onNavigate('test')}
+        >
+          Тест ИИ
+        </button>
+      </nav>
     </header>
   );
 }
