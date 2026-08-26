@@ -9,7 +9,7 @@ export default defineConfig({
       // Проксируем API на локальный backend; порт можно переопределить
       // (на macOS порт 5000 часто занят AirPlay Receiver)
       '/api': {
-        target: `http://localhost:${process.env.BACKEND_PORT ?? '5000'}`,
+        target: `http://localhost:${process.env.BACKEND_PORT ?? '5057'}`,
         changeOrigin: true,
       },
     },

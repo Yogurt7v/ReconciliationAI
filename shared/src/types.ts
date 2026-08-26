@@ -7,7 +7,7 @@
 export type SideRole = 'ours' | 'partner';
 
 /** Откуда извлечены данные */
-export type SourceKind = 'excel' | 'pdf-text' | 'pdf-ocr';
+export type SourceKind = 'excel' | 'pdf-text' | 'pdf-ocr' | 'ai-structured';
 
 /** Значение ячейки «сырой» сетки после парсинга файла */
 export type CellValue = string | number | boolean | null;
@@ -243,4 +243,12 @@ export interface ConfirmPayload {
   headerRowIndex: number;
   dataStartRowIndex: number;
   columns: Record<MappingFieldKey, number | null>;
+}
+
+/** Результат AI-парсинга двухстороннего акта сверки */
+export interface AiStructuredResult {
+  ours: ParsedSide;
+  partner: ParsedSide;
+  /** Оригинальный ответ AI для отладки и логирования */
+  raw: unknown;
 }

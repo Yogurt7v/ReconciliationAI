@@ -16,10 +16,12 @@
 import { createRequire } from 'node:module';
 
 import { OCR_MIN_CHARS_PER_PAGE } from '@recon/shared';
-import type { CellValue, Grid, RawSource } from '@recon/shared';
+import type { AiStructuredResult, CellValue, Grid, RawSource } from '@recon/shared';
 
 import { assignColumns, segmentsToGrid, trimGridEdges } from './tableGeometry.js';
 import type { Segment } from './tableGeometry.js';
+import { looksTwoSided, parseTwoSidedPdf } from '../services/ai/structuredParse.js';
+import type { AiConfig } from '../services/ai/client.js';
 
 const require = createRequire(import.meta.url);
 
@@ -251,4 +253,37 @@ export async function parsePdf(buffer: Buffer, fileName: string): Promise<RawSou
   } finally {
     await doc.destroy().catch(() => undefined);
   }
+}
+
+/* ---------------------- Двусторонний парсинг (AI) ------------------------- */
+
+/** Конвертирует Grid обратно в текст для передачи AI */
+function gridToText(grid: Grid): string {
+  return grid.map((row) => row.map((v) => (v === null || v === undefined) ? '' : String(v)).join('\t')).join('\n');
+}
+
+/**
+ * Пытается распарсить двухсторонний акт сверки через AI.
+ *
+ * Логика:
+ *  1. Извлекаем текст из PDF (через существующий parsePdf → grid → text).
+ *  2. Проверяем эвристику looksTwoSided.
+ *  3. Если двухсторонний формат обнаружен ИЛИ twoSided=true — вызываем AI.
+ *  4. При ошибке/неудаче — возвращаем null (fallback на стандартный пайплайн).
+ */
+export async function detectTwoSidedPdf(
+  buffer: Buffer,
+  fileName: string,
+  aiConfig: AiConfig,
+  twoSidedRequested: boolean,
+): Promise<AiStructuredResult | null> {
+  const source = await parsePdf(buffer, fileName);
+
+  if (source.needsOcr || source.grid.length === 0) return null;
+
+  const text = gridToText(source.grid);
+
+  if (!twoSidedRequested && !looksTwoSided(text)) return null;
+
+  return parseTwoSidedPdf(aiConfig, text, fileName);
 }

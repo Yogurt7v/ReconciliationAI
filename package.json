@@ -4,7 +4,7 @@
   "private": true,
   "description": "AI-агент для сверки актов сверки с контрагентами (MVP)",
   "scripts": {
-    "dev": "pnpm -r --parallel --stream dev",
+    "dev": "PORT=5057 pnpm -r --parallel --stream dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",

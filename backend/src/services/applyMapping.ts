@@ -9,6 +9,9 @@ import Decimal from 'decimal.js';
 import { MAX_DATA_ROWS, normalizeDocNumber, parseDate, parseMoney } from '@recon/shared';
 import type { CellValue, ColumnMapping, Grid, ParsedRow, ParsedSide, RawSource, SideRole } from '@recon/shared';
 
+/** Строки-лейблы (сальдо, обороты, итоги) — не являются данными документов */
+const LABEL_RE = /^\s*(сальдо\s+(начальн|конеч|на\s+начало|на\s+конец)|оборот[ыа]?\s+(за\s+)?период|оборот[ыа]?\s+по\s+договору|итого)/i;
+
 export function cellToString(v: CellValue): string {
   if (v === null || v === undefined) return '';
   return String(v).replace(/\u00A0/g, ' ').trim();
@@ -56,6 +59,13 @@ export function findBalances(grid: Grid): {
     };
 
     const values = grabAllAfter();
+    // Fallback: pdf.js может склеить число с текстом ("7 999,99Сальдо конечное")
+    if (values.length === 0) {
+      for (let c = labelEnd - 1; c >= 0 && c >= labelEnd - 3; c--) {
+        const money = parseMoney(line[c] ?? null);
+        if (money !== null) { values.push(money); break; }
+      }
+    }
     if (/начал/.test(text) && out.openingBalance === null) {
       out.openingBalance = values[0] ?? null;
     } else if (/конец|конеч/.test(text) && out.closingBalance === null) {
@@ -104,6 +114,12 @@ export function applyMapping(
 
     const docNumberRaw = cellToString(get(line, columns.docNumber));
     const docNumberNorm = normalizeDocNumber(docNumberRaw);
+
+    // Строки-лейблы (сальдо, обороты) — пропускаем даже если есть дата/сумма
+    if (LABEL_RE.test(docNumberRaw)) {
+      skipped++;
+      continue;
+    }
 
     // Строки без номера документа — итоги («Итого», сальдо) или пустые
     if (!docNumberRaw && !docNumberNorm) {

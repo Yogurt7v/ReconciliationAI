@@ -114,9 +114,9 @@ export default function App() {
 function AppBar() {
   return (
     <header className="appbar">
-      <span className="appbar-brand">Reconciliation AI</span>
+      <span className="appbar-brand">Акты сверки</span>
       <span className="appbar-subtitle">
-        Сверка актов сверки
+        Reconciliation AI
       </span>
     </header>
   );

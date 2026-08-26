@@ -37,11 +37,17 @@ export interface Job {
   /** Разрешение ожидания подтверждения маппинга пользователем */
   confirmResolver: (() => void) | null;
   createdAt: number;
+  /** Пользователь запросил двухсторонний парсинг PDF */
+  twoSidedRequested: boolean;
 }
 
 const jobs = new Map<string, Job>();
 
-export function createJob(files: { ours: string; partner: string }, buffers: { ours: Buffer; partner: Buffer }): Job {
+export function createJob(
+  files: { ours: string; partner: string },
+  buffers: { ours: Buffer; partner: Buffer },
+  twoSidedRequested = false,
+): Job {
   const job: Job = {
     id: randomUUID(),
     stage: 'uploaded',
@@ -60,6 +66,7 @@ export function createJob(files: { ours: string; partner: string }, buffers: { o
     mappings: {},
     confirmResolver: null,
     createdAt: Date.now(),
+    twoSidedRequested,
   };
   jobs.set(job.id, job);
   return job;

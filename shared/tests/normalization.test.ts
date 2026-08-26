@@ -122,6 +122,41 @@ describe('normalizeDocNumber', () => {
     expect(normalizeDocNumber('   ')).toBeNull();
     expect(normalizeDocNumber(null)).toBeNull();
   });
+
+  it('извлечение из скобок: (513 от 17.04.2026)', () => {
+    expect(normalizeDocNumber('Оплата (513 от 17.04.2026)')).toBe('513');
+    expect(normalizeDocNumber('Продажа (Ф-01-007458 от 31.01.2026)')).toBe('ф-01-007458');
+    expect(normalizeDocNumber('20.04.26 Оплата (512 от 17.04.2026)')).toBe('512');
+  });
+
+  it('извлечение по №/N/#', () => {
+    expect(normalizeDocNumber('Договор №РРО-2023-9218249 от 13.12.2023')).toBe('рро-2023-9218249');
+    expect(normalizeDocNumber('№ 513')).toBe('513');
+    expect(normalizeDocNumber('# 12345')).toBe('12345');
+  });
+
+  it('простые номера без скобок', () => {
+    expect(normalizeDocNumber('101')).toBe('101');
+    expect(normalizeDocNumber('123/А')).toBe('123/а');
+  });
+});
+
+describe('parseDate (ведущая дата в строке)', () => {
+  it('дата из начала строки с текстом', () => {
+    expect(parseDate('20.04.26 Оплата (513 от 17.04.2026)')).toBe('2026-04-20');
+    expect(parseDate('31.01.26 Продажа (Ф-01-007458 от 31.01.2026)')).toBe('2026-01-31');
+    expect(parseDate('06.04.26 Оплата (479 от 06.04.2026)')).toBe('2026-04-06');
+  });
+
+  it('точное совпадение по-прежнему работает', () => {
+    expect(parseDate('05.03.2026')).toBe('2026-03-05');
+    expect(parseDate('5.3.26')).toBe('2026-03-05');
+  });
+
+  it('числа без даты дают null', () => {
+    expect(parseDate('15 066,67')).toBeNull();
+    expect(parseDate('7 999,99Сальдо')).toBeNull();
+  });
 });
 
 describe('columnLetter', () => {

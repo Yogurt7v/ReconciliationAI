@@ -20,6 +20,7 @@ interface Slot {
 export default function UploadScreen({ onUploaded, onError }: Props) {
   const [ours, setOurs] = useState<Slot>({ file: null });
   const [partner, setPartner] = useState<Slot>({ file: null });
+  const [twoSided, setTwoSided] = useState(false);
   const [busy, setBusy] = useState(false);
   const oursRef = useRef<HTMLInputElement>(null);
   const partnerRef = useRef<HTMLInputElement>(null);
@@ -41,20 +42,23 @@ export default function UploadScreen({ onUploaded, onError }: Props) {
     else setPartner({ file });
   };
 
-  const canSubmit = Boolean(ours.file && partner.file && !busy);
+  const canSubmit = twoSided
+    ? Boolean(ours.file && !busy)
+    : Boolean(ours.file && partner.file && !busy);
 
   const submit = useCallback(async () => {
-    if (!ours.file || !partner.file) return;
+    if (!ours.file) return;
+    if (!twoSided && !partner.file) return;
     setBusy(true);
     onError(null);
     try {
-      const { id } = await api.upload(ours.file, partner.file);
+      const { id } = await api.upload(ours.file, partner.file ?? null, twoSided);
       onUploaded(id);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Не удалось загрузить файлы');
       setBusy(false);
     }
-  }, [ours.file, partner.file, onUploaded, onError]);
+  }, [ours.file, partner.file, twoSided, onUploaded, onError]);
 
   return (
     <div className="card">
@@ -62,25 +66,48 @@ export default function UploadScreen({ onUploaded, onError }: Props) {
         <h2>Файлы для сверки</h2>
       </div>
 
+      <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', marginBottom: 'var(--sp-4)', cursor: 'pointer' }}>
+        <input
+          type="checkbox"
+          checked={twoSided}
+          onChange={(e) => {
+            setTwoSided(e.target.checked);
+            if (e.target.checked) setPartner({ file: null });
+          }}
+          style={{ width: 18, height: 18, accentColor: 'var(--accent)' }}
+        />
+        <span>Двусторонний акт (данные обеих сторон в одном PDF)</span>
+      </label>
+
       <div className="ledger-spread">
+
         <div className="ledger-side">
-          <div className="ledger-eyebrow">Ваш акт</div>
-          <Dropzone label="Ваш акт сверки" slot={ours} inputRef={oursRef} onPick={pick('ours')} />
+          <div className="ledger-eyebrow">Акт контрагента</div>
+          {twoSided ? (
+            <p className="muted" style={{ fontSize: 'var(--text-sm)', padding: 'var(--sp-3) 0' }}>
+              Данные контрагента будут извлечены из вашего файла автоматически.
+            </p>
+          ) : (
+            <Dropzone label="Акт контрагента" slot={partner} inputRef={partnerRef} onPick={pick('partner')} />
+          )}
         </div>
 
         <div className="ledger-spine" aria-hidden="true" />
 
         <div className="ledger-side">
-          <div className="ledger-eyebrow">Акт контрагента</div>
-          <Dropzone label="Акт контрагента" slot={partner} inputRef={partnerRef} onPick={pick('partner')} />
+          <div className="ledger-eyebrow">Ваш акт</div>
+          <Dropzone label="Ваш акт сверки" slot={ours} inputRef={oursRef} onPick={pick('ours')} />
         </div>
+
       </div>
 
       <div className="upload-actions">
+        <span className="muted">
+          {twoSided ? 'PDF двустороннего акта, до ' : 'XLSX или PDF, до '}{MAX_MB} МБ
+        </span>
         <button className="btn btn-primary" disabled={!canSubmit} onClick={submit}>
           {busy ? 'Загрузка…' : 'Сверить документы'}
         </button>
-        <span className="muted">XLSX или PDF, до {MAX_MB} МБ</span>
       </div>
     </div>
   );

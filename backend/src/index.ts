@@ -8,7 +8,7 @@
  *  GET  /api/jobs/:id/report   — JSON | ?format=html | xlsx | pdf
  *  POST /api/jobs/:id/cancel   — отмена задания
  *
- * Запуск: PORT из окружения (по умолчанию 5000), CORS открыт для dev-фронта.
+ * Запуск: PORT из окружения (по умолчанию 5057, т.к. 5000 занят AirPlay на macOS), CORS открыт для dev-фронта.
  */
 
 import 'dotenv/config';
@@ -65,39 +65,49 @@ async function readUploadFile(part: unknown): Promise<UploadedFile> {
 
 app.post('/api/upload', async (req, reply) => {
   const found: Partial<Record<'ours' | 'partner', UploadedFile>> = {};
+  let twoSided = false;
 
   for await (const part of req.parts()) {
-    if (part.type !== 'file') continue;
-    if (part.fieldname !== 'ours' && part.fieldname !== 'partner') continue;
-    if (found[part.fieldname]) {
-      return reply.code(400).send({ error: `Поле «${part.fieldname}» указано дважды.` });
-    }
-    try {
-      found[part.fieldname] = await readUploadFile(part);
-    } catch (err) {
-      // Превышение лимита размера внутри multipart-парсера
-      const message =
-        err instanceof Error && /limit/i.test(err.message)
-          ? `Файл «${part.filename}» больше ${Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024))} МБ.`
-          : `Не удалось прочитать файл «${part.filename}».`;
-      return reply.code(413).send({ error: message });
+    if (part.type === 'file') {
+      if (part.fieldname !== 'ours' && part.fieldname !== 'partner') continue;
+      if (found[part.fieldname]) {
+        return reply.code(400).send({ error: `Поле «${part.fieldname}» указано дважды.` });
+      }
+      try {
+        found[part.fieldname] = await readUploadFile(part);
+      } catch (err) {
+        const message =
+          err instanceof Error && /limit/i.test(err.message)
+            ? `Файл «${part.filename}» больше ${Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024))} МБ.`
+            : `Не удалось прочитать файл «${part.filename}».`;
+        return reply.code(413).send({ error: message });
+      }
+    } else if (part.type === 'field' && part.fieldname === 'twoSided') {
+      const val = await part.value;
+      twoSided = val === 'true' || val === '1';
     }
   }
 
-  if (!found.ours || !found.partner) {
+  if (!found.ours) {
+    return reply.code(400).send({ error: 'Поле ours («ваш файл») обязательно.' });
+  }
+  if (!twoSided && !found.partner) {
     return reply
       .code(400)
       .send({ error: 'Нужны оба файла: поля ours («ваш файл») и partner («файл контрагента»).' });
   }
 
   for (const key of ['ours', 'partner'] as const) {
+    if (!found[key]) continue;
     const problem = validateFile(found[key]!);
     if (problem) return reply.code(400).send({ error: problem });
   }
 
+  const partnerFile = found.partner ?? found.ours!;
   const job = createJob(
-    { ours: found.ours!.filename, partner: found.partner!.filename },
-    { ours: found.ours!.buffer, partner: found.partner!.buffer },
+    { ours: found.ours!.filename, partner: partnerFile.filename },
+    { ours: found.ours!.buffer, partner: partnerFile.buffer },
+    twoSided,
   );
   void runPipeline(job.id);
 
@@ -206,7 +216,7 @@ app.get('/api/health', async () => ({ ok: true }));
 
 /* ---------------------------------- Старт --------------------------------- */
 
-const port = Number(process.env.PORT ?? 5000);
+const port = Number(process.env.PORT ?? 5057);
 
 try {
   await app.listen({ port, host: '0.0.0.0' });

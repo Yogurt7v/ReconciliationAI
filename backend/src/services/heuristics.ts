@@ -143,7 +143,7 @@ function pickByHeader(
  * Эвристический маппинг полей по шапке.
  * Возвращает готовый ColumnMapping с объяснениями на русском.
  */
-export function heuristicMapping(analysis: GridAnalysis, headerLine?: CellValue[]): ColumnMapping {
+export function heuristicMapping(analysis: GridAnalysis, headerLine?: CellValue[], grid?: Grid): ColumnMapping {
   const reasoning: string[] = [];
   const columns: Record<MappingFieldKey, number | null> = {
     docNumber: null,
@@ -192,14 +192,36 @@ export function heuristicMapping(analysis: GridAnalysis, headerLine?: CellValue[
   }
   confidence = Math.min(confidence, 0.95);
 
-  // Обязательные поля отсутствуют → уверенность ниже порога подтверждения
-  const missing = (['docNumber', 'docDate', 'amount'] as MappingFieldKey[]).filter(
+  // Обязательные поля отсутствуют → проверяем комбинированные колонки
+  // Если нет колонки docNumber, но есть docDate — проверяем, содержат ли данные
+  // комбинированные строки вида "20.04.26 Оплата (513 от 17.04.2026)"
+  if (grid && columns.docNumber === null && columns.docDate !== null) {
+    const sampleRows = grid.slice(
+      analysis.dataStartRowIndex,
+      analysis.dataStartRowIndex + 10,
+    );
+    const combinedPattern = /\([^)]*\d[^)]*\)/;
+    const combinedHits = sampleRows.filter((row: CellValue[]) => {
+      const cell = cellToString(row[columns.docDate!] ?? null);
+      return combinedPattern.test(cell);
+    }).length;
+    if (combinedHits >= 2) {
+      columns.docNumber = columns.docDate;
+      confidence = Math.max(confidence, 0.65);
+      reasoning.push(
+        `Номер документа извлечён из комбинированной строки «Дата Документ» (${combinedHits} из ${sampleRows.length} строк содержат номер в скобках).`,
+      );
+    }
+  }
+
+  // Пересчитываем обязательные поля после комбинированного маппинга
+  const missingAfter = (['docNumber', 'docDate', 'amount'] as MappingFieldKey[]).filter(
     (f) => columns[f] === null,
   );
-  if (missing.length > 0) {
+  if (missingAfter.length > 0) {
     confidence = Math.min(confidence, 0.45);
     reasoning.push(
-      `Не найдены обязательные колонки: ${missing.map(fieldLabel).join(', ')}. Требуется уточнение.`,
+      `Не найдены обязательные колонки: ${missingAfter.map(fieldLabel).join(', ')}. Требуется уточнение.`,
     );
   }
 
@@ -230,7 +252,7 @@ function fieldLabel(f: MappingFieldKey): string {
 export function analyzeAndMap(grid: Grid): { analysis: GridAnalysis; mapping: ColumnMapping } {
   const analysis = analyzeGrid(grid);
   const headerLine = grid[analysis.headerRowIndex ?? 0] ?? [];
-  const mapping = heuristicMapping(analysis, headerLine);
+  const mapping = heuristicMapping(analysis, headerLine, grid);
   return { analysis, mapping };
 }
 

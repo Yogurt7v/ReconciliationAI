@@ -92,6 +92,24 @@
 ## Session Memory
 
 ### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
 - None captured yet.
 
 ### Long Horizon Context
@@ -375,8 +393,3 @@ USER:
 **Secondary Font**: [Body text and supporting content font]
 **Font Scale**: [12px → 14px → 16px → 18px → 24px → 30px → 36px]
 **Font Weights**: [400, 500, 600, 700]
-**Line Heights**: [Optimal line heights for readability]
-
-### Spacing System
-**Base Unit**: 4px
-**Scale**: [4px, 8px, 12px, 16px, 24px, 32px, 48px, 64px]

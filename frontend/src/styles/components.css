@@ -174,8 +174,8 @@
 
 .dropzone.filled {
   border-style: solid;
-  border-color: var(--ok);
-  background: var(--ok-bg);
+  border-color: var(--accent-secondary);
+  background: var(--tint-light);
 }
 
 .dropzone:focus-visible {
@@ -194,7 +194,7 @@
 }
 
 .dropzone.filled .dropzone-icon {
-  color: var(--ok);
+  color: var(--accent-secondary);
 }
 
 .dropzone-label {
@@ -283,7 +283,8 @@
 .upload-actions {
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: 20px;
+  justify-content: end;
   margin-top: var(--sp-6);
 }
 

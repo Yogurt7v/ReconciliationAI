@@ -21,7 +21,7 @@ import type {
 } from '@recon/shared';
 
 import { parseExcel } from '../parsers/excelParser.js';
-import { parsePdf } from '../parsers/pdfParser.js';
+import { parsePdf, detectTwoSidedPdf } from '../parsers/pdfParser.js';
 import { parsePdfWithOcr } from '../parsers/ocrPipeline.js';
 import { buildPreview, columnStats } from '../services/heuristics.js';
 import { applyMapping } from '../services/applyMapping.js';
@@ -241,6 +241,106 @@ export async function runPipeline(jobId: string): Promise<void> {
       pushStep(job, 'parsing', 'Обнаружен скан', 'Один из файлов распознан через OCR — возможны неточности распознавания.');
     }
 
+    /* --------------------- двухсторонний PDF (AI) ----------------------- */
+    // Двусторонний акт: пользователь галочкой указал, что файл контрагента
+    // содержит данные обеих сторон. Парсим AI-моделью, берём только
+    // контрагентскую сторону (party_1 = левая колонка в PDF).
+    if (job.twoSidedRequested) {
+      const partnerIsTextPdf = partnerSource.kind === 'pdf-text' && !partnerSource.needsOcr;
+      if (partnerIsTextPdf) {
+        const aiConfig = aiConfigFromEnv();
+        const twoSided = await detectTwoSidedPdf(
+          job.buffers.partner,
+          job.files.partner,
+          aiConfig,
+          true,
+        );
+
+        if (twoSided) {
+          // party_1 (ours в structuredParse) = левая сторона = партнёр
+          // party_2 (partner в structuredParse) = правая сторона = наши
+          // Нам нужна только сторона партнёра (party_1 → twoSided.ours)
+          partnerParsed = twoSided.ours;
+
+          pushStep(
+            job,
+            'structure',
+            'Двусторонний акт контрагента распознан через AI',
+            `Извлечено ${partnerParsed.rows.length} строк со стороны контрагента.`,
+          );
+        }
+      }
+    }
+
+    // Legacy: автодетект двухстороннего акта в нашем файле (если не было ручного флага)
+    if (!partnerParsed) {
+      const oursIsTextPdf = oursSource.kind === 'pdf-text' && !oursSource.needsOcr;
+      if (oursIsTextPdf) {
+        const aiConfig = aiConfigFromEnv();
+        const twoSided = await detectTwoSidedPdf(
+          job.buffers.ours,
+          job.files.ours,
+          aiConfig,
+          job.twoSidedRequested,
+        );
+
+        if (twoSided) {
+          job.sources.ours = {
+            grid: [],
+            kind: 'ai-structured',
+            fileName: job.files.ours,
+            sheetName: null,
+            pages: null,
+          };
+          job.sources.partner = {
+            grid: [],
+            kind: 'ai-structured',
+            fileName: job.files.partner,
+            sheetName: null,
+            pages: null,
+          };
+          oursParsed = twoSided.ours;
+          partnerParsed = twoSided.partner;
+
+          pushStep(
+            job,
+            'structure',
+            'Двусторонний акт распознан через AI',
+            `Извлечено ${twoSided.ours.rows.length} строк (наша сторона), ${twoSided.partner.rows.length} строк (контрагент).`,
+          );
+        }
+      }
+    }
+
+    if (oursParsed && partnerParsed) {
+      // Обе стороны уже извлечены — переходим сразу к reconciliation
+      checkCancelled(job);
+      updateStage(job, 'reconciliation', 'Сопоставление документов…');
+      coreResult = reconcileSides(oursParsed, partnerParsed);
+      pushStep(
+        job,
+        'reconciliation',
+        'Сверка выполнена',
+        `Совпало пар: ${coreResult.matchedPairs.length}; только у нас: ${coreResult.onlyOurs.length}; только у контрагента: ${coreResult.onlyPartner.length}; расхождений сумм: ${coreResult.amountMismatches.length}; дат: ${coreResult.dateMismatches.length}.`,
+      );
+
+      // Анализ и отчёт
+      checkCancelled(job);
+      updateStage(job, 'analysis', 'Формирование отчёта…');
+      const report = buildReport({
+        jobId: job.id,
+        ours: oursParsed,
+        partner: partnerParsed,
+        core: coreResult,
+        hypothesesAi: null,
+        aiLogic: job.reasoningLog,
+      });
+      job.report = report;
+      job.reportReady = true;
+      updateStage(job, 'done', 'Отчёт готов');
+      return;
+    }
+
     /* ----------------------------- structure ---------------------------- */
     checkCancelled(job);
     updateStage(job, 'structure', 'Определение структуры таблиц…');
@@ -248,13 +348,17 @@ export async function runPipeline(jobId: string): Promise<void> {
     // Стороны обрабатываются последовательно: каждая может запросить подтверждение
     await ensureConfirmedStructure(job, 'ours');
     checkCancelled(job);
-    await ensureConfirmedStructure(job, 'partner');
-    checkCancelled(job);
+    if (!partnerParsed) {
+      await ensureConfirmedStructure(job, 'partner');
+      checkCancelled(job);
+    }
 
     /* ----------------------------- extraction --------------------------- */
     updateStage(job, 'extraction', 'Извлечение строк документов…');
     oursParsed = extractSide(job, 'ours');
-    partnerParsed = extractSide(job, 'partner');
+    if (!partnerParsed) {
+      partnerParsed = extractSide(job, 'partner');
+    }
 
     /* --------------------------- reconciliation ------------------------- */
     checkCancelled(job);

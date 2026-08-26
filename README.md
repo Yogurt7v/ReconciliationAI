@@ -42,13 +42,13 @@ pnpm install
 # Ключ OpenRouter (для AI-функций; без него работает детерминированный режим)
 cp .env.example backend/.env   # при необходимости отредактируйте
 
-pnpm dev        # backend :5000 + frontend :3000 (Vite проксирует /api)
+pnpm dev        # backend :5057 + frontend :3000 (Vite проксирует /api)
 ```
 
 Открыть http://localhost:3000, загрузить два файла.
 
-> На macOS порт 5000 может быть занят AirPlay Receiver. Тогда:
-> `PORT=5057 pnpm dev` и `BACKEND_PORT=5057` для frontend (см. `frontend/vite.config.ts`).
+> Порт backend = **5057** (порт 5000 на macOS занят AirPlay Receiver по умолчанию).
+> Если AirPlay отключён, можно переопределить: `PORT=5000 pnpm dev`.
 
 ### Проверка качества
 

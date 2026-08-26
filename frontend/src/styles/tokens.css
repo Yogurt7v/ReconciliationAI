@@ -1,42 +1,50 @@
 /* ============================================================
-   Design Tokens — «Гроссбух»
-   ReconciliationAI Design System
+   Design Tokens — «Гроссбух» + ColorHunt palette
+   Palette: #3368A0 · #66A3BF · #C8DFDB · #F2EFE7
    ============================================================ */
 
 :root {
   /* ---- Surface ---- */
-  --paper: #f6f7f9;
+  --paper: #f2efe7;
   --surface: #ffffff;
-  --surface-raised: #fcfcfd;
+  --surface-raised: #faf9f6;
 
   /* ---- Ink ---- */
-  --ink: #101828;
-  --ink-secondary: #344054;
-  --ink-muted: #5a6472;
+  --ink: #1b2a3d;
+  --ink-secondary: #33506b;
+  --ink-muted: #6b7f8e;
 
   /* ---- Lines ---- */
-  --line: #e6e8ee;
-  --line-strong: #d2d7e0;
+  --line: #e2dfd6;
+  --line-strong: #c8dfdb;
   --line-focus: var(--accent);
 
-  /* ---- Accent (Кобальтовый индиго) ---- */
-  --accent: #3d50d8;
-  --accent-hover: #3444c4;
-  --accent-light: rgba(61, 80, 216, 0.08);
+  /* ---- Accent — #3368A0 ---- */
+  --accent: #3368a0;
+  --accent-hover: #2a5689;
+  --accent-light: rgba(51, 104, 160, 0.08);
   --accent-ink: #ffffff;
 
+  /* ---- Secondary accent — #66A3BF ---- */
+  --accent-secondary: #66a3bf;
+  --accent-secondary-light: rgba(102, 163, 191, 0.12);
+
+  /* ---- Tint — #C8DFDB ---- */
+  --tint: #c8dfdb;
+  --tint-light: rgba(200, 223, 219, 0.35);
+
   /* ---- Semantic ---- */
-  --ok: #0f9256;
-  --ok-bg: rgba(15, 146, 86, 0.08);
-  --ok-border: rgba(15, 146, 86, 0.2);
+  --ok: #2a7d5f;
+  --ok-bg: rgba(42, 125, 95, 0.08);
+  --ok-border: rgba(42, 125, 95, 0.2);
 
-  --warn: #b54708;
-  --warn-bg: rgba(181, 71, 8, 0.08);
-  --warn-border: rgba(181, 71, 8, 0.2);
+  --warn: #b07a2a;
+  --warn-bg: rgba(176, 122, 42, 0.08);
+  --warn-border: rgba(176, 122, 42, 0.2);
 
-  --bad: #d92d20;
-  --bad-bg: rgba(217, 45, 32, 0.08);
-  --bad-border: rgba(217, 45, 32, 0.2);
+  --bad: #b83c32;
+  --bad-bg: rgba(184, 60, 50, 0.08);
+  --bad-border: rgba(184, 60, 50, 0.2);
 
   --info: var(--accent);
   --info-bg: var(--accent-light);
@@ -86,10 +94,10 @@
   --radius-xl: 14px;
   --radius-full: 999px;
 
-  /* ---- Shadows ---- */
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 1px 3px rgba(16, 24, 40, 0.1), 0 4px 12px rgba(16, 24, 40, 0.04);
-  --shadow-lg: 0 2px 4px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.06);
+  /* ---- Shadows (warm-tinted) ---- */
+  --shadow-sm: 0 1px 2px rgba(51, 104, 160, 0.04);
+  --shadow-md: 0 1px 3px rgba(51, 104, 160, 0.08), 0 4px 12px rgba(51, 104, 160, 0.03);
+  --shadow-lg: 0 2px 4px rgba(51, 104, 160, 0.05), 0 8px 24px rgba(51, 104, 160, 0.04);
 
   /* ---- Transitions ---- */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -108,6 +116,6 @@
   --ledger-rule-thin: 1px;
   --ledger-rule-thick: 2px;
 
-  /* ---- Breakpoints (reference only — CSS @media below) ---- */
+  /* ---- Breakpoints (reference only) ---- */
   /* sm: 640px | md: 768px | lg: 1024px | xl: 1280px */
 }

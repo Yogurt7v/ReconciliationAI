@@ -1,10 +1,11 @@
 /**
  * Интеграционные тесты оркестрации: полный прогон без AI-ключа
- * (деградированный режим), поток подтверждения структуры и отмена.
+ * (деградированный режим), поток подтверждения структуры, отмена
+ * и двухсторонний парсинг PDF.
  */
 
 import * as XLSX from 'xlsx';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createJob, getJob, confirmMapping, requestCancel, toStatus } from '../src/jobs/store.js';
 import { runPipeline } from '../src/jobs/pipeline.js';
@@ -109,5 +110,59 @@ describe('runPipeline (деградированный режим, без клю�
     expect(job.stage).toBe('cancelled');
     expect(job.error).toBeNull();
     expect(requestCancel(job.id)).toBe(false); // терминальная стадия
+  }, 30_000);
+});
+
+describe('runPipeline (двухсторонний PDF контрагента)', () => {
+  it('twoSidedRequested=true → ours=xlsx normal path, partner=two-sided AI → done', async () => {
+    const pdfParser = await import('../src/parsers/pdfParser.js');
+    vi.spyOn(pdfParser, 'detectTwoSidedPdf').mockResolvedValue({
+      ours: {
+        role: 'ours',
+        meta: { fileName: 'partner.pdf', kind: 'ai-structured', sheetName: null, pages: null, rowsExtracted: 2, rowsSkipped: 0 },
+        rows: [
+          { rowIndex: 0, docNumber: '101', docNumberNorm: '101', docDate: '2026-03-05', amount: '15000.00', debit: '15000.00', credit: null },
+          { rowIndex: 1, docNumber: '102', docNumberNorm: '102', docDate: '2026-03-06', amount: '4200.50', debit: '4200.50', credit: null },
+        ],
+        openingBalance: null, closingBalance: null, turnoverDebit: '19200.50', turnoverCredit: null, assumptions: [],
+      },
+      partner: {
+        role: 'partner',
+        meta: { fileName: 'partner.pdf', kind: 'ai-structured', sheetName: null, pages: null, rowsExtracted: 2, rowsSkipped: 0 },
+        rows: [
+          { rowIndex: 0, docNumber: '101', docNumberNorm: '101', docDate: '2026-03-05', amount: '15000.00', debit: '15000.00', credit: null },
+          { rowIndex: 1, docNumber: '102', docNumberNorm: '102', docDate: '2026-03-06', amount: '4200.50', debit: '4200.50', credit: null },
+        ],
+        openingBalance: null, closingBalance: null, turnoverDebit: '19200.50', turnoverCredit: null, assumptions: [],
+      },
+      raw: {},
+    });
+
+    // Мокаем parsePdf для партнёрского PDF (буфер — xlsx, но расширение .pdf)
+    vi.spyOn(pdfParser, 'parsePdf').mockResolvedValue({
+      grid: [['test']],
+      kind: 'pdf-text',
+      fileName: 'partner.pdf',
+      sheetName: null,
+      pages: 1,
+      needsOcr: false,
+    });
+
+    // Наш файл — xlsx (parseExcel), файл контрагента — pdf (parsePdf замокан)
+    const job = createJob(
+      { ours: 'ours.xlsx', partner: 'partner.pdf' },
+      { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
+      true, // twoSidedRequested
+    );
+
+    await runPipeline(job.id);
+
+    const status = toStatus(job);
+    expect(status.stage).toBe('done');
+    expect(status.reportReady).toBe(true);
+    expect(job.report).not.toBeNull();
+    expect(job.report!.summary.matched).toBe(2);
+
+    vi.restoreAllMocks();
   }, 30_000);
 });

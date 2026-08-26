@@ -128,6 +128,42 @@
 ## Session Memory
 
 ### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
 - None captured yet.
 
 ### Long Horizon Context
@@ -288,20 +324,3 @@ A3. Пишу клиент OpenRouter с JSON-режимом, таймаутом 
 
 ASSISTANT:
 Теперь `structureAssist.ts` — AI-помощник определения структуры со слиянием эвристик и деградацией:
-
----
-
-ASSISTANT:
-Теперь `hypotheses.ts` — шаблонные правила + AI-гипотезы:
-
----
-
-ASSISTANT:
-Тесты для AI-сервиса — с заглушкой `fetch` через `vi.stubGlobal`:
-
----
-
-ASSISTANT:
-Логика retry опирается на текст detail — ненадёжно. Добавляю статус в ошибку:
-
----

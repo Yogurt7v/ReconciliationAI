@@ -27,10 +27,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  upload(ours: File, partner: File): Promise<{ id: string }> {
+  upload(ours: File, partner: File | null, twoSided = false): Promise<{ id: string }> {
     const form = new FormData();
     form.append('ours', ours);
-    form.append('partner', partner);
+    if (partner) form.append('partner', partner);
+    if (twoSided) form.append('twoSided', 'true');
     return request('/api/upload', { method: 'POST', body: form });
   },
 

@@ -177,13 +177,20 @@ export function parseDate(input: unknown): string | null {
   if (m) return iso(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 
   // Числовые форматы: dd.mm.yyyy | dd/mm/yyyy | dd-mm-yyyy | короткий год
-  m = /^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2}|\d{4})$/.exec(raw);
-  if (m) {
-    const day = Number(m[1]);
-    const month = Number(m[2]);
-    let year = Number(m[3]);
-    if (year < 100) year += year < 50 ? 2000 : 1900;
-    return iso(year, month - 1, day);
+  // Сначала точное совпадение, затем — ведущая дата в строке ("20.04.26 Оплата ...")
+  const ddPatterns = [
+    /^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2}|\d{4})$/,
+    /^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2}|\d{4})\b/,
+  ];
+  for (const pattern of ddPatterns) {
+    m = pattern.exec(raw);
+    if (m) {
+      const day = Number(m[1]);
+      const month = Number(m[2]);
+      let year = Number(m[3]);
+      if (year < 100) year += year < 50 ? 2000 : 1900;
+      return iso(year, month - 1, day);
+    }
   }
 
   // Словесные месяцы: "5 марта 2026", "05 Марта 2026 г.", "Mar 5, 2026"
@@ -222,9 +229,12 @@ export function excelSerialToIso(serial: number): string | null {
 const DASHES = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g;
 
 /**
- * Нормализация номера документа для сопоставления:
- * нижний регистр, унификация тире, удаление пробелов и знака №.
- * Исходный номер сохраняется отдельно для отображения пользователю.
+ * Нормализация номера документа для сопоставления.
+ *
+ * Стратегия:
+ *  1. Извлечение из скобок: "Оплата (513 от 17.04.2026)" → "513"
+ *  2. Извлечение по №/N/#: "Договор №РРО-2023-9218249 от 13.12.2023" → "рро-2023-9218249"
+ *  3. Обычная нормализация: нижний регистр, унификация тире, удаление пробелов.
  */
 export function normalizeDocNumber(input: unknown): string | null {
   if (input === null || input === undefined) return null;
@@ -233,9 +243,22 @@ export function normalizeDocNumber(input: unknown): string | null {
     .replace(/\u00A0/g, ' ')
     .trim();
   if (!s) return null;
+
+  // 1. Извлечение из скобок: "(513 от 17.04.2026)" → "513"
+  const parenMatch = s.match(/\(([^)]+)\)/);
+  if (parenMatch?.[1]) {
+    const inner = parenMatch[1].trim();
+    const numMatch = inner.match(/^(.+?)\s+от\s+\d/i);
+    s = numMatch?.[1] ? numMatch[1].trim() : inner;
+  } else {
+    // 2. Извлечение по №/N/#: "№ 513" → "513", "N 513" → "513"
+    const numMatch = s.match(/(?:№|N\s*|#)\s*(\S+)/i);
+    if (numMatch?.[1]) s = numMatch[1];
+  }
+
+  // 3. Обычная нормализация
   s = s
     .replace(DASHES, '-')
-    .replace(/^[\s№nN°#]+/, '') // ведущие №, #, n°
     .toLowerCase()
     .replace(/\s+/g, '')
     .replace(/^[-/,]+|[-/,]+$/g, ''); // крайняя пунктуация не участвует в ключе
