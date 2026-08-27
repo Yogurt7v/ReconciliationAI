@@ -4,7 +4,7 @@ import { MAX_FILE_SIZE_BYTES } from '@recon/shared';
 
 import { api } from '../api';
 import { ApiError } from '../api';
-import type { AiDebugInfo, TestAnalyzeResponse } from '../api';
+import type { AiDebugInfo, Contract, TestAnalyzeResponse } from '../api';
 import { UploadCloudIcon, FileIcon } from '../components/icons';
 
 const ACCEPT = '.xlsx,.xls,.pdf';
@@ -210,17 +210,25 @@ function ResultCard({ result }: { result: TestAnalyzeResponse }) {
         <span className="balance-value">{fmt(r.openingBalance)}</span>
       </div>
 
-      {/* Таблица операций */}
-      <TransactionsSection transactions={r.transactions} />
+      {/* Договоры */}
+      {r.contracts.length === 0 ? (
+        <div className="empty-state">Договоры не найдены</div>
+      ) : (
+        <div style={{ marginBottom: 'var(--sp-4)' }}>
+          {r.contracts.map((contract, i) => (
+            <ContractBlock key={i} contract={contract} />
+          ))}
+        </div>
+      )}
 
-      {/* Обороты */}
+      {/* Обороты итого */}
       <div className="turnover-row">
         <div className="turnover-item">
-          <span className="turnover-label">Оборот дебет</span>
+          <span className="turnover-label">Оборот дебет итого</span>
           <span className="turnover-value">{fmt(r.turnoverDebit)}</span>
         </div>
         <div className="turnover-item">
-          <span className="turnover-label">Оборот кредит</span>
+          <span className="turnover-label">Оборот кредит итого</span>
           <span className="turnover-value">{fmt(r.turnoverCredit)}</span>
         </div>
       </div>
@@ -287,39 +295,49 @@ function ResultCard({ result }: { result: TestAnalyzeResponse }) {
   );
 }
 
-/* ----------------------------- Transactions ------------------------------ */
+/* ----------------------------- Contract Block ---------------------------- */
 
-function TransactionsSection({ transactions }: { transactions: TestAnalyzeResponse['result']['transactions'] }) {
-  if (transactions.length === 0) {
-    return <div className="empty-state">Операции не найдены</div>;
-  }
+function ContractBlock({ contract }: { contract: Contract }) {
+  const hasOps = contract.transactions.length > 0;
 
   return (
-    <div style={{ marginBottom: 'var(--sp-4)' }}>
-      <div style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-muted)', marginBottom: 'var(--sp-2)' }}>
-        Операций: {transactions.length}
+    <div className="contract-block">
+      <div className="contract-header">
+        <span className="contract-name">{contract.name}</span>
       </div>
-      <div style={{ overflowX: 'auto' }}>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Дата</th>
-              <th>Документ</th>
-              <th className="num">Дебет</th>
-              <th className="num">Кредит</th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((t, i) => (
-              <tr key={i}>
-                <td style={{ whiteSpace: 'nowrap' }}>{t.date}</td>
-                <td>{t.document}</td>
-                <td className="num">{t.debit !== null ? fmt(t.debit) : ''}</td>
-                <td className="num">{t.credit !== null ? fmt(t.credit) : ''}</td>
-              </tr>
+
+      <div className="contract-body">
+        <div className="contract-balance-line">
+          <span className="contract-balance-label">Сальдо начальное:</span>{' '}
+          <span className="contract-balance-value">{fmt(contract.openingBalance)}</span>
+        </div>
+
+        {hasOps && (
+          <div className="contract-ops">
+            {contract.transactions.map((t, i) => (
+              <div key={i} className="contract-op-line">
+                <span className="contract-op-date">{t.date}</span>
+                <span className="contract-op-doc">{t.document}</span>
+                <span className="contract-op-amt">
+                  {t.debit !== null && <span className="contract-op-debit">{fmt(t.debit)} дебет</span>}
+                  {t.credit !== null && <span className="contract-op-credit">{fmt(t.credit)} кредит</span>}
+                </span>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+        )}
+
+        {(contract.turnoverDebit !== null || contract.turnoverCredit !== null) && (
+          <div className="contract-turnovers-line">
+            {contract.turnoverDebit !== null && <span>Оборот дебет: {fmt(contract.turnoverDebit)}</span>}
+            {contract.turnoverCredit !== null && <span>Оборот кредит: {fmt(contract.turnoverCredit)}</span>}
+          </div>
+        )}
+
+        <div className="contract-balance-line">
+          <span className="contract-balance-label">Сальдо конечное:</span>{' '}
+          <span className="contract-balance-value">{fmt(contract.closingBalance)}</span>
+        </div>
       </div>
     </div>
   );

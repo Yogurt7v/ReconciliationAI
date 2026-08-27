@@ -39,20 +39,22 @@ export interface Transaction {
   credit: number | null;
 }
 
-export interface BalanceCheck {
-  expected: number | null;
-  actual: number | null;
-  match: boolean;
+export interface Contract {
+  name: string;
+  openingBalance: number;
+  closingBalance: number;
+  turnoverDebit: number | null;
+  turnoverCredit: number | null;
+  transactions: Transaction[];
 }
 
 export interface DocumentData {
   totalRows: number;
-  openingBalance: number | null;
-  closingBalance: number | null;
+  openingBalance: number;
+  closingBalance: number;
   turnoverDebit: number | null;
   turnoverCredit: number | null;
-  balanceCheck: BalanceCheck;
-  transactions: Transaction[];
+  contracts: Contract[];
 }
 
 export interface AiDebugInfo {

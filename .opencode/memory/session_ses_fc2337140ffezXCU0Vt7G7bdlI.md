@@ -650,6 +650,114 @@
 ## Session Memory
 
 ### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
 - None captured yet.
 
 ### Long Horizon Context
@@ -732,21 +840,3 @@ ASSISTANT:
    - Или это будет **отдельный тестовый промпт**, который потом интегрируется в основной пайплайн?
 
 8. **Автоматический vs ручной режим** — после загрузки файла пайплайн должен:
-   - Автоматически запускать анализ и показать результат?
-   - Или сначала показать распознанную таблицу и дать возможность скорректировать (как текущий confirmation)?
-
-9. **Тестовые данные** — есть ли у вас готовые XLSX/PDF файлы для тестирования, или нужно сгенерировать?
-
-10. **Итеративность** — планируете ли вы менять промпт прямо на странице (textarea с промптом + кнопка "перезапустить"), или правки промпта будут в коде, а на странице только результат?
-
-11. **Сравнение двух вариантов промпта** — нужна ли возможность загрузить один файл и одновременно запустить два разных промпта, чтобы сравнить результаты?
-</conversation_update>
-
-</existing_memory>
-
-<conversation_update>
-USER:
-1 упрощённый экран для быстрого тестирования ИИ-промпта (загрузил файл → посмотрел что ИИ вернул) 
-2) только один. надо научить находить то что мне надо. потом добавим второй.
-3)оба
-4)Определение структуры таблицы (какие колонки — номер документа, дата, сумма, дебет, кредит)

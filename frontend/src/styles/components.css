@@ -948,3 +948,94 @@
   font-weight: var(--weight-semibold);
   color: var(--ink);
 }
+
+/* ---- Contract Blocks ---- */
+
+.contract-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--sp-3);
+  overflow: hidden;
+}
+
+.contract-header {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.contract-name {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+}
+
+.contract-body {
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.contract-balance-line {
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  margin-bottom: var(--sp-2);
+  text-align: right;
+}
+
+.contract-balance-label {
+  font-weight: normal;
+}
+
+.contract-balance-value {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+}
+
+.contract-ops {
+  margin: var(--sp-2) 0;
+}
+
+.contract-op-line {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: var(--text-xs);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.contract-op-line:last-child {
+  border-bottom: none;
+}
+
+.contract-op-date {
+  color: var(--ink-muted);
+  white-space: nowrap;
+  min-width: 50px;
+}
+
+.contract-op-doc {
+  color: var(--ink);
+  flex: 1;
+}
+
+.contract-op-amt {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.contract-op-debit {
+  color: var(--ok);
+}
+
+.contract-op-credit {
+  color: var(--bad);
+}
+
+.contract-turnovers-line {
+  display: flex;
+  gap: var(--sp-4);
+  font-size: var(--text-xs);
+  color: var(--ink-secondary);
+  margin: var(--sp-2) 0;
+}
