@@ -239,8 +239,8 @@ export default function TestScreen({ onBack }: Props) {
 
     const debitA = a.turnoverDebit ?? 0;
     const creditA = a.turnoverCredit ?? 0;
-    const debitB = b.turnoverDebit ?? 0;
-    const creditB = b.turnoverCredit ?? 0;
+    const debitB = b.turnoverCredit ?? 0;
+    const creditB = b.turnoverDebit ?? 0;
 
     const txsA: Transaction[] = [];
     const txsB: Transaction[] = [];
@@ -1029,14 +1029,14 @@ function ComparisonCard({ comparison }: { comparison: ComparisonResult }) {
       {/* Обороты */}
       <div className="comparison-section">
         <div className="comparison-row">
-          <span>Дебет А = Дебет Б:</span>
+          <span>Дебет А = Кредит Б:</span>
           <span className={tc.debitA_eq_debitB ? 'match' : 'mismatch'}>
             {fmt(tc.debitA)} = {fmt(tc.debitB)}
             {tc.debitA_eq_debitB ? ' ✓' : ' ✗'}
           </span>
         </div>
         <div className="comparison-row">
-          <span>Кредит А = Кредит Б:</span>
+          <span>Кредит А = Дебит Б:</span>
           <span className={tc.creditA_eq_creditB ? 'match' : 'mismatch'}>
             {fmt(tc.creditA)} = {fmt(tc.creditB)}
             {tc.creditA_eq_creditB ? ' ✓' : ' ✗'}
