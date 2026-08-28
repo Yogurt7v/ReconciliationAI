@@ -16,6 +16,7 @@
 import { createRequire } from 'node:module';
 
 import { OCR_MIN_CHARS_PER_PAGE } from '@recon/shared';
+import { median } from '@recon/shared';
 import type { AiStructuredResult, CellValue, Grid, RawSource } from '@recon/shared';
 
 import { assignColumns, segmentsToGrid, trimGridEdges } from './tableGeometry.js';
@@ -87,13 +88,6 @@ export function pdfjsAssetDir(subdir: 'cmaps' | 'standard_fonts'): string | unde
 interface PositionedItem extends PdfTextItem {
   x: number;
   y: number;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
 /** Группировка элементов в визуальные строки по базовой линии Y */
@@ -272,13 +266,11 @@ function gridToText(grid: Grid): string {
  *  4. При ошибке/неудаче — возвращаем null (fallback на стандартный пайплайн).
  */
 export async function detectTwoSidedPdf(
-  buffer: Buffer,
+  source: RawSource,
   fileName: string,
   aiConfig: AiConfig,
   twoSidedRequested: boolean,
 ): Promise<AiStructuredResult | null> {
-  const source = await parsePdf(buffer, fileName);
-
   if (source.needsOcr || source.grid.length === 0) return null;
 
   const text = gridToText(source.grid);

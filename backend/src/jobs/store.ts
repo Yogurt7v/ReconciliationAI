@@ -5,16 +5,18 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type {
-  ColumnMapping,
-  ConfirmPayload,
-  JobStage,
-  JobStatus,
-  PendingConfirmation,
-  RawSource,
-  ReasoningStep,
-  ReconciliationReport,
-  SideRole,
+import {
+  JOB_TTL_MS,
+  MAX_ACTIVE_JOBS,
+  type ColumnMapping,
+  type ConfirmPayload,
+  type JobStage,
+  type JobStatus,
+  type PendingConfirmation,
+  type RawSource,
+  type ReasoningStep,
+  type ReconciliationReport,
+  type SideRole,
 } from '@recon/shared';
 
 export interface Job {
@@ -43,11 +45,26 @@ export interface Job {
 
 const jobs = new Map<string, Job>();
 
+function cleanupExpiredJobs(): void {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (isTerminal(job) || now - job.createdAt > JOB_TTL_MS) {
+      jobs.delete(id);
+    }
+  }
+}
+
 export function createJob(
   files: { ours: string; partner: string },
   buffers: { ours: Buffer; partner: Buffer },
   twoSidedRequested = false,
 ): Job {
+  if (jobs.size >= MAX_ACTIVE_JOBS) {
+    throw new Error('Превышен лимит одновременных заданий. Попробуйте позже.');
+  }
+
+  cleanupExpiredJobs();
+
   const job: Job = {
     id: randomUUID(),
     stage: 'uploaded',
@@ -69,6 +86,18 @@ export function createJob(
     twoSidedRequested,
   };
   jobs.set(job.id, job);
+
+  // Safety TTL: отменяем задание, если оно зависло
+  const ttlTimer = setTimeout(() => {
+    if (!isTerminal(job)) {
+      job.stage = 'cancelled';
+      job.message = 'Задание отменено по таймауту';
+      job.etaSeconds = null;
+      jobs.delete(job.id);
+    }
+  }, JOB_TTL_MS);
+  ttlTimer.unref();
+
   return job;
 }
 
@@ -104,6 +133,14 @@ export function isTerminal(job: Job): boolean {
 export function confirmMapping(jobId: string, payload: ConfirmPayload): boolean {
   const job = jobs.get(jobId);
   if (!job || !job.pendingConfirmation) return false;
+
+  // Валидация payload
+  if (payload.headerRowIndex < 0 || payload.dataStartRowIndex < 0) return false;
+  if (payload.dataStartRowIndex <= payload.headerRowIndex) return false;
+  const colValues = Object.values(payload.columns);
+  if (colValues.some((v) => v !== null && (!Number.isInteger(v) || v < 0))) return false;
+  const nonNull = colValues.filter((v): v is number => v !== null);
+  if (new Set(nonNull).size !== nonNull.length) return false;
 
   const role = job.pendingConfirmation.side;
   const previous = job.mappings[role];

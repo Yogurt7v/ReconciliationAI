@@ -15,7 +15,7 @@
 import { AI_STRUCTURE_SAMPLE_ROWS } from '@recon/shared';
 import type { ColumnMapping, Grid, MappingFieldKey } from '@recon/shared';
 
-import { cellToString } from '../applyMapping.js';
+import { cellToString } from '@recon/shared';
 import { analyzeAndMap } from '../heuristics.js';
 import { AiUnavailableError, aiConfigFromEnv, requestJson } from './client.js';
 
@@ -127,7 +127,7 @@ export async function assistStructure(grid: Grid): Promise<StructureAssistResult
   const colCount = grid.reduce((m, r) => Math.max(m, r.length), 0);
 
   try {
-    const raw = await requestJson<AiStructureResponse>(
+    const { data: raw } = await requestJson<AiStructureResponse>(
       config,
       SYSTEM_PROMPT,
       { rowCount: Math.min(grid.length, AI_STRUCTURE_SAMPLE_ROWS), totalColumns: colCount, rows: sample },

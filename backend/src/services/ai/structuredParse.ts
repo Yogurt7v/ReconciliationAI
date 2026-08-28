@@ -283,7 +283,7 @@ export async function parseTwoSidedPdf(
   if (!pdfText.trim()) return null;
 
   try {
-    const raw = await requestJson<AiStructuredResponse>(
+    const { data: raw } = await requestJson<AiStructuredResponse>(
       config,
       SYSTEM_PROMPT,
       { text: pdfText },
@@ -312,6 +312,7 @@ export async function parseTwoSidedPdf(
     return { ours, partner, raw };
   } catch (err) {
     if (err instanceof AiUnavailableError) return null;
+    console.error('[structuredParse] Unexpected error:', err);
     return null;
   }
 }

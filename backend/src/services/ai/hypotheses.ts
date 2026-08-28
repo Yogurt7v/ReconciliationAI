@@ -148,7 +148,7 @@ export async function aiHypotheses(
   ctx: HypothesisContext,
 ): Promise<Hypothesis[] | null> {
   try {
-    const raw = await requestJson<AiHypothesesResponse>(
+    const { data: raw } = await requestJson<AiHypothesesResponse>(
       config,
       SYSTEM_PROMPT,
       {

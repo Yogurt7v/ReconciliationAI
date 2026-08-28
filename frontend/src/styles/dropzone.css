@@ -1,0 +1,89 @@
+/* ============================================================
+   Dropzone — file upload drag-and-drop area
+   ============================================================ */
+
+.dropzone {
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-6) var(--sp-5);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out),
+              background var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  position: relative;
+}
+
+/* ---- Hover ---- */
+
+.dropzone:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+/* ---- Drag Over ---- */
+
+.dropzone.over {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  border-style: solid;
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+/* ---- Filled (file selected) ---- */
+
+.dropzone.filled {
+  border-style: solid;
+  border-color: var(--accent-secondary);
+  background: var(--tint-light);
+}
+
+/* ---- Focus ---- */
+
+.dropzone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Icon ---- */
+
+.dropzone-icon {
+  color: var(--ink-muted);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.dropzone:hover .dropzone-icon,
+.dropzone.over .dropzone-icon {
+  color: var(--accent);
+}
+
+.dropzone.filled .dropzone-icon {
+  color: var(--accent-secondary);
+}
+
+/* ---- Labels ---- */
+
+.dropzone-label {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-secondary);
+}
+
+.dropzone-hint {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.dropzone-file {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink);
+  word-break: break-all;
+}

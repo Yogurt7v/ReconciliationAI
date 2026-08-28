@@ -1,0 +1,72 @@
+/* ============================================================
+   Details — styled <details>/<summary> disclosure component
+   ============================================================ */
+
+details {
+  margin-top: var(--sp-3);
+}
+
+details > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  padding: var(--sp-1) 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  transition: color var(--duration-fast) var(--ease-out);
+  user-select: none;
+}
+
+details > summary:hover {
+  color: var(--accent);
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary::before {
+  content: '\25B8';
+  display: inline-block;
+  font-size: 0.8em;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+/* ---- Code Panel (debug / JSON content) ---- */
+
+.details-code-panel {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--paper);
+  padding: var(--sp-3);
+  border-radius: var(--radius-md);
+  margin-top: var(--sp-2);
+  line-height: 1.6;
+}
+
+.details-pre {
+  margin: var(--sp-2) 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow: auto;
+}
+
+/* ---- Raw JSON Pre ---- */
+
+.details-json-pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--paper);
+  padding: var(--sp-3);
+  border-radius: var(--radius-md);
+  overflow: auto;
+  max-height: 200px;
+  margin-top: var(--sp-2);
+}
