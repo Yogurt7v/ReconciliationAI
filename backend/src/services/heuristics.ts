@@ -9,7 +9,7 @@
  *     и для confidence, и для экрана подтверждения у пользователя.
  */
 
-import { columnLetter, parseDate, parseMoney } from '@recon/shared';
+import { cellToString, columnLetter, parseDate, parseMoney } from '@recon/shared';
 import type { CellValue, ColumnMapping, ColumnStats, Grid, MappingFieldKey, PreviewTable } from '@recon/shared';
 
 interface HeaderKeyword {
@@ -32,11 +32,6 @@ const KEYWORDS: HeaderKeyword[] = [
   { re: /наименование|операция|содержание|назначение|основание/i, weight: 1 },
   { re: /период/i, weight: 1 },
 ];
-
-function cellToString(v: CellValue): string {
-  if (v === null || v === undefined) return '';
-  return String(v).replace(/\u00A0/g, ' ').trim();
-}
 
 export interface GridAnalysis {
   headerRowIndex: number | null;

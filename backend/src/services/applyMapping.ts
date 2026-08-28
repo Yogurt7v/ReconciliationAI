@@ -6,16 +6,13 @@
 
 import Decimal from 'decimal.js';
 
-import { MAX_DATA_ROWS, normalizeDocNumber, parseDate, parseMoney } from '@recon/shared';
+import { cellToString, MAX_DATA_ROWS, normalizeDocNumber, parseDate, parseMoney } from '@recon/shared';
 import type { CellValue, ColumnMapping, Grid, ParsedRow, ParsedSide, RawSource, SideRole } from '@recon/shared';
+
+export { cellToString } from '@recon/shared';
 
 /** Строки-лейблы (сальдо, обороты, итоги) — не являются данными документов */
 const LABEL_RE = /^\s*(сальдо\s+(начальн|конеч|на\s+начало|на\s+конец)|оборот[ыа]?\s+(за\s+)?период|оборот[ыа]?\s+по\s+договору|итого)/i;
-
-export function cellToString(v: CellValue): string {
-  if (v === null || v === undefined) return '';
-  return String(v).replace(/\u00A0/g, ' ').trim();
-}
 
 /** Сумма колонки по извлечённым строкам (для оборотов), либо null */
 export function sumColumn(rows: ParsedRow[], key: 'debit' | 'credit'): string | null {
@@ -158,7 +155,7 @@ export function applyMapping(
     if (rows.length >= MAX_DATA_ROWS) break;
   }
 
-  const balances = findBalances(grid);
+  const balances = findBalances(grid.slice(start));
 
   return {
     role,

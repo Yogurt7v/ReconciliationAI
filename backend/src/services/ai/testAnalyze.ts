@@ -8,8 +8,8 @@
  */
 
 import type { Grid } from '@recon/shared';
+import { cellToString, TEST_ANALYZE_SAMPLE_ROWS } from '@recon/shared';
 
-import { cellToString } from '../applyMapping.js';
 import { type AiConfig, type AiDebugInfo, AiUnavailableError, requestJson } from './client.js';
 
 /* -------------------------------- Типы ----------------------------------- */
@@ -260,7 +260,7 @@ export async function testAnalyze(grid: Grid, config: AiConfig): Promise<TestAna
     throw new AiUnavailableError('Таблица пуста — нечего анализировать.');
   }
 
-  const sampleRows = grid.map((row) => row.map(cellToString));
+  const sampleRows = grid.slice(0, TEST_ANALYZE_SAMPLE_ROWS).map((row) => row.map(cellToString));
   const colCount = grid.reduce((m, r) => Math.max(m, r.length), 0);
 
   const { data: raw, debug } = await requestJson<AiDocumentResponse>(

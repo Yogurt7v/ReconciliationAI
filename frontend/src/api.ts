@@ -1,9 +1,3 @@
-import type {
-  ConfirmPayload,
-  JobStatus,
-  ReconciliationReport,
-} from '@recon/shared';
-
 export class ApiError extends Error {
   debug?: AiDebugInfo;
 
@@ -129,36 +123,4 @@ export const api = {
     form.append('file', file);
     return request('/api/test/analyze', { method: 'POST', body: form });
   },
-
-  upload(ours: File, partner: File | null, twoSided = false): Promise<{ id: string }> {
-    const form = new FormData();
-    form.append('ours', ours);
-    if (partner) form.append('partner', partner);
-    if (twoSided) form.append('twoSided', 'true');
-    return request('/api/upload', { method: 'POST', body: form });
-  },
-
-  status(jobId: string): Promise<JobStatus> {
-    return request(`/api/jobs/${jobId}/status`);
-  },
-
-  confirm(jobId: string, payload: ConfirmPayload): Promise<{ ok: boolean }> {
-    return request(`/api/jobs/${jobId}/mapping`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  },
-
-  report(jobId: string): Promise<ReconciliationReport> {
-    return request(`/api/jobs/${jobId}/report?format=json`);
-  },
-
-  cancel(jobId: string): Promise<{ ok: boolean }> {
-    return request(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
-  },
 };
-
-export function formatMoney(value: string | null): string {
-  return value ?? '—';
-}

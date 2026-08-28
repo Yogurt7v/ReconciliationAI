@@ -189,6 +189,10 @@ export async function requestJson<T>(
           : new AiUnavailableError('Сетевая ошибка OpenRouter', String(err));
       debug.errorMessage = lastError.detail ?? lastError.message;
       if (!lastError.retryable) break;
+      // Задержка перед повтором
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
     }
   }
   if (lastError) {

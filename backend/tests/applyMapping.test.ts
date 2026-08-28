@@ -88,6 +88,19 @@ describe('findBalances', () => {
     expect(result.openingBalance).toBeNull();
     expect(result.closingBalance).toBeNull();
   });
+
+  it('findBalances ищет сальдо только после dataStartRowIndex', () => {
+    const grid: Grid = [
+      ['Сальдо начальное', '', '100'],  // строка 0 — шапка, не брать
+      ['Номер', 'Дата', 'Сумма'],       // строка 1 — заголовок
+      ['1', '01.03', '1000'],            // строка 2 — данные
+      ['Сальдо на конец', '', '2000'],   // строка 3 — итог
+    ];
+    // Симулируем slice(start) как в applyMapping
+    const result = findBalances(grid.slice(1));
+    expect(result.openingBalance).toBeNull();
+    expect(result.closingBalance).toBe('2000.00');
+  });
 });
 
 describe('applyMapping', () => {

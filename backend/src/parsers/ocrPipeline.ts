@@ -17,6 +17,7 @@ import { createCanvas } from '@napi-rs/canvas';
 import sharp from 'sharp';
 
 import type { Grid, RawSource } from '@recon/shared';
+import { median } from '@recon/shared';
 
 import { loadPdfjs } from './pdfParser.js';
 import { assignColumns, segmentsToGrid, trimGridEdges } from './tableGeometry.js';
@@ -147,13 +148,6 @@ export async function warmUpOcr(): Promise<{ dir: string; files: string[] }> {
 }
 
 /* --------------------- Восстановление сетки из слов ----------------------- */
-
-const median = (values: number[]): number => {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-};
 
 /**
  * Группировка слов в строки по вертикальному центру (скользящее среднее базы),

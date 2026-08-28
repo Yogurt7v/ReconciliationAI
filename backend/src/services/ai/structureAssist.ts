@@ -15,7 +15,7 @@
 import { AI_STRUCTURE_SAMPLE_ROWS } from '@recon/shared';
 import type { ColumnMapping, Grid, MappingFieldKey } from '@recon/shared';
 
-import { cellToString } from '../applyMapping.js';
+import { cellToString } from '@recon/shared';
 import { analyzeAndMap } from '../heuristics.js';
 import { AiUnavailableError, aiConfigFromEnv, requestJson } from './client.js';
 

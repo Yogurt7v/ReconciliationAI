@@ -32,7 +32,7 @@ describe('requestJson', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const out = await requestJson<{ ok: number }>({ apiKey: 'k', model: 'm' }, 'sys', {});
-    expect(out).toEqual({ ok: 1 });
+    expect(out.data).toEqual({ ok: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -46,7 +46,7 @@ describe('requestJson', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const out = await requestJson<string>({ apiKey: 'k', model: 'm' }, 'sys', {});
-    expect(out).toBe('yes');
+    expect(out.data).toBe('yes');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

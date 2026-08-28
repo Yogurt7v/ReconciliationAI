@@ -250,7 +250,7 @@ export async function runPipeline(jobId: string): Promise<void> {
       if (partnerIsTextPdf) {
         const aiConfig = aiConfigFromEnv();
         const twoSided = await detectTwoSidedPdf(
-          job.buffers.partner,
+          partnerSource,
           job.files.partner,
           aiConfig,
           true,
@@ -278,7 +278,7 @@ export async function runPipeline(jobId: string): Promise<void> {
       if (oursIsTextPdf) {
         const aiConfig = aiConfigFromEnv();
         const twoSided = await detectTwoSidedPdf(
-          job.buffers.ours,
+          oursSource,
           job.files.ours,
           aiConfig,
           job.twoSidedRequested,
@@ -422,5 +422,8 @@ export async function runPipeline(jobId: string): Promise<void> {
     job.message = 'Ошибка обработки';
     job.etaSeconds = null;
     pushStep(job, 'failed', 'Задание завершилось ошибкой', job.error);
+  } finally {
+    // Освобождаем буферы — они больше не нужны после формирования отчёта
+    job.buffers = { ours: Buffer.alloc(0), partner: Buffer.alloc(0) };
   }
 }

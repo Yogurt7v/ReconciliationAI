@@ -2,11 +2,7 @@
  * HTTP API backend'а (Fastify 5).
  *
  * Маршруты:
- *  POST /api/upload            — поля ours/partner (.xlsx/.xls/.pdf) → { id }
- *  GET  /api/jobs/:id/status   — JobStatus (progress, stage, ETA, reasoning…)
- *  POST /api/jobs/:id/mapping  — ConfirmPayload: подтверждение структуры
- *  GET  /api/jobs/:id/report   — JSON | ?format=html | xlsx | pdf
- *  POST /api/jobs/:id/cancel   — отмена задания
+ *  POST /api/test/analyze — AI-анализ одного файла
  *
  * Запуск: PORT из окружения (по умолчанию 5057, т.к. 5000 занят AirPlay на macOS), CORS открыт для dev-фронта.
  */
@@ -19,15 +15,10 @@ import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 
 import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES } from '@recon/shared';
-import type { ConfirmPayload } from '@recon/shared';
 
-import { createJob, getJob, toStatus, confirmMapping, requestCancel } from './jobs/store.js';
-import { runPipeline } from './jobs/pipeline.js';
 import { parseExcel } from './parsers/excelParser.js';
 import { parsePdf } from './parsers/pdfParser.js';
-import { buildHtmlReport } from './services/export/htmlReport.js';
-import { buildXlsxReport } from './services/export/xlsxReport.js';
-import { buildPdfReport, PdfFontError } from './services/export/pdfReport.js';
+import { rateLimiter } from './rateLimit.js';
 import { aiConfigFromEnv } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
 
@@ -45,6 +36,8 @@ await app.register(cors, { origin: true });
 await app.register(multipart, {
   limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 2 },
 });
+
+app.addHook('onRequest', rateLimiter);
 
 /* --------------------------------- Upload --------------------------------- */
 
@@ -67,57 +60,6 @@ async function readUploadFile(part: unknown): Promise<UploadedFile> {
   const p = part as { filename: string; toBuffer(): Promise<Buffer> };
   return { filename: p.filename, buffer: await p.toBuffer() };
 }
-
-app.post('/api/upload', async (req, reply) => {
-  const found: Partial<Record<'ours' | 'partner', UploadedFile>> = {};
-  let twoSided = false;
-
-  for await (const part of req.parts()) {
-    if (part.type === 'file') {
-      if (part.fieldname !== 'ours' && part.fieldname !== 'partner') continue;
-      if (found[part.fieldname]) {
-        return reply.code(400).send({ error: `Поле «${part.fieldname}» указано дважды.` });
-      }
-      try {
-        found[part.fieldname] = await readUploadFile(part);
-      } catch (err) {
-        const message =
-          err instanceof Error && /limit/i.test(err.message)
-            ? `Файл «${part.filename}» больше ${Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024))} МБ.`
-            : `Не удалось прочитать файл «${part.filename}».`;
-        return reply.code(413).send({ error: message });
-      }
-    } else if (part.type === 'field' && part.fieldname === 'twoSided') {
-      const val = await part.value;
-      twoSided = val === 'true' || val === '1';
-    }
-  }
-
-  if (!found.ours) {
-    return reply.code(400).send({ error: 'Поле ours («ваш файл») обязательно.' });
-  }
-  if (!twoSided && !found.partner) {
-    return reply
-      .code(400)
-      .send({ error: 'Нужны оба файла: поля ours («ваш файл») и partner («файл контрагента»).' });
-  }
-
-  for (const key of ['ours', 'partner'] as const) {
-    if (!found[key]) continue;
-    const problem = validateFile(found[key]!);
-    if (problem) return reply.code(400).send({ error: problem });
-  }
-
-  const partnerFile = found.partner ?? found.ours!;
-  const job = createJob(
-    { ours: found.ours!.filename, partner: partnerFile.filename },
-    { ours: found.ours!.buffer, partner: partnerFile.buffer },
-    twoSided,
-  );
-  void runPipeline(job.id);
-
-  return reply.code(201).send({ id: job.id });
-});
 
 /* ----------------------------- Тестовый анализ ---------------------------- */
 
@@ -192,107 +134,15 @@ app.post('/api/test/analyze', async (req, reply) => {
   }
 });
 
-/* --------------------------------- Статус --------------------------------- */
-
-app.get<{ Params: { id: string } }>('/api/jobs/:id/status', async (req, reply) => {
-  const job = getJob(req.params.id);
-  if (!job) return reply.code(404).send({ error: 'Задание не найдено.' });
-  return toStatus(job);
-});
-
-/* ------------------------------- Подтверждение ---------------------------- */
-
-app.post<{ Params: { id: string }; Body: ConfirmPayload }>('/api/jobs/:id/mapping', async (req, reply) => {
-  const job = getJob(req.params.id);
-  if (!job) return reply.code(404).send({ error: 'Задание не найдено.' });
-  if (job.stage !== 'awaiting_confirmation') {
-    return reply.code(409).send({ error: 'Задание сейчас не ждёт подтверждения структуры.' });
-  }
-
-  const body = req.body;
-  if (
-    typeof body?.headerRowIndex !== 'number' ||
-    typeof body?.dataStartRowIndex !== 'number' ||
-    !body.columns ||
-    typeof body.columns !== 'object'
-  ) {
-    return reply.code(400).send({
-      error: 'Ожидается { headerRowIndex, dataStartRowIndex, columns: { docNumber, docDate, amount, debit, credit } }.',
-    });
-  }
-
-  const ok = confirmMapping(job.id, body);
-  if (!ok) return reply.code(409).send({ error: 'Не удалось применить подтверждение.' });
-  return { ok: true };
-});
-
-/* ---------------------------------- Отчёт --------------------------------- */
-
-app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
-  '/api/jobs/:id/report',
-  async (req, reply) => {
-    const job = getJob(req.params.id);
-    if (!job) return reply.code(404).send({ error: 'Задание не найдено.' });
-    if (!job.reportReady || !job.report) {
-      return reply.code(409).send({ error: 'Отчёт ещё не готов.', stage: job.stage });
-    }
-
-    const format = (req.query.format ?? 'json').toLowerCase();
-
-    switch (format) {
-      case 'json':
-        return job.report;
-
-      case 'html': {
-        const html = buildHtmlReport(job.report);
-        return reply
-          .header('content-type', 'text/html; charset=utf-8')
-          .header('content-disposition', `inline; filename="report-${job.id}.html"`)
-          .send(html);
-      }
-
-      case 'xlsx': {
-        const buf = await buildXlsxReport(job.report);
-        return reply
-          .header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-          .header('content-disposition', `attachment; filename="report-${job.id}.xlsx"`)
-          .send(buf);
-      }
-
-      case 'pdf': {
-        try {
-          const buf = await buildPdfReport(job.report);
-          return reply
-            .header('content-type', 'application/pdf')
-            .header('content-disposition', `attachment; filename="report-${job.id}.pdf"`)
-            .send(buf);
-        } catch (err) {
-          if (err instanceof PdfFontError) {
-            return reply.code(503).send({ error: err.message });
-          }
-          throw err;
-        }
-      }
-
-      default:
-        return reply.code(400).send({ error: `Неизвестный формат «${format}». Доступны: json, html, xlsx, pdf.` });
-    }
-  },
-);
-
-/* ---------------------------------- Отмена -------------------------------- */
-
-app.post<{ Params: { id: string } }>('/api/jobs/:id/cancel', async (req, reply) => {
-  const ok = requestCancel(req.params.id);
-  if (!ok) return reply.code(409).send({ error: 'Задание не найдено или уже завершено.' });
-  return { ok: true };
-});
-
 /* ---------------------------------- Здоровье ------------------------------ */
 
 app.get('/api/health', async () => ({ ok: true }));
 
 /* ---------------------------------- Старт --------------------------------- */
+
+process.on('unhandledRejection', (err) => {
+  app.log.error(err, 'Unhandled rejection');
+});
 
 const port = Number(process.env.PORT ?? 5057);
 

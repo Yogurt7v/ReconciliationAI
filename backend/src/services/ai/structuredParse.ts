@@ -312,6 +312,7 @@ export async function parseTwoSidedPdf(
     return { ours, partner, raw };
   } catch (err) {
     if (err instanceof AiUnavailableError) return null;
+    console.error('[structuredParse] Unexpected error:', err);
     return null;
   }
 }

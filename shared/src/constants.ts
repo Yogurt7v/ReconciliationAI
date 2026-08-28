@@ -23,3 +23,16 @@ export const AI_STRUCTURE_SAMPLE_ROWS = 30;
 
 /** Размер чанка строк скана для очистки через модель */
 export const AI_OCR_CHUNK_ROWS = 60;
+
+/** Сколько первых строк отправляем в testAnalyze (защита от превышения контекста) */
+export const TEST_ANALYZE_SAMPLE_ROWS = 50;
+
+/** Максимальное количество одновременных заданий */
+export const MAX_ACTIVE_JOBS = 10;
+
+/** TTL задания: 30 минут (safety, основная очистка — при старте нового анализа) */
+export const JOB_TTL_MS = 30 * 60 * 1000;
+
+/** Лимит запросов rate limiting */
+export const RATE_LIMIT_MAX = 10;
+export const RATE_LIMIT_WINDOW_MS = 60_000;

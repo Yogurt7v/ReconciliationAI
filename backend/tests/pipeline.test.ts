@@ -166,3 +166,82 @@ describe('runPipeline (двухсторонний PDF контрагента)', 
     vi.restoreAllMocks();
   }, 30_000);
 });
+
+describe('confirmMapping валидация', () => {
+  it('отклоняет отрицательные индексы', () => {
+    const job = createJob(
+      { ours: 'o.xlsx', partner: 'p.xlsx' },
+      { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
+    );
+    // Имитируем pending confirmation
+    job.pendingConfirmation = {
+      side: 'ours',
+      reason: 'test',
+      preview: { headers: [], columnLetters: [], rows: [], stats: [], totalRows: 0 },
+      suggested: { headerRowIndex: 0, dataStartRowIndex: 1, columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null }, confidence: 0.5, source: 'heuristic', reasoning: [] },
+    };
+
+    expect(confirmMapping(job.id, {
+      headerRowIndex: -1,
+      dataStartRowIndex: 1,
+      columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null },
+    })).toBe(false);
+  });
+
+  it('отклоняет dataStartRowIndex <= headerRowIndex', () => {
+    const job = createJob(
+      { ours: 'o.xlsx', partner: 'p.xlsx' },
+      { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
+    );
+    job.pendingConfirmation = {
+      side: 'ours',
+      reason: 'test',
+      preview: { headers: [], columnLetters: [], rows: [], stats: [], totalRows: 0 },
+      suggested: { headerRowIndex: 0, dataStartRowIndex: 1, columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null }, confidence: 0.5, source: 'heuristic', reasoning: [] },
+    };
+
+    expect(confirmMapping(job.id, {
+      headerRowIndex: 2,
+      dataStartRowIndex: 1,
+      columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null },
+    })).toBe(false);
+  });
+
+  it('отклоняет дублирующиеся колонки', () => {
+    const job = createJob(
+      { ours: 'o.xlsx', partner: 'p.xlsx' },
+      { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
+    );
+    job.pendingConfirmation = {
+      side: 'ours',
+      reason: 'test',
+      preview: { headers: [], columnLetters: [], rows: [], stats: [], totalRows: 0 },
+      suggested: { headerRowIndex: 0, dataStartRowIndex: 1, columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null }, confidence: 0.5, source: 'heuristic', reasoning: [] },
+    };
+
+    expect(confirmMapping(job.id, {
+      headerRowIndex: 0,
+      dataStartRowIndex: 1,
+      columns: { docNumber: 0, docDate: 0, amount: 2, debit: null, credit: null },
+    })).toBe(false);
+  });
+
+  it('принимает валидный payload', () => {
+    const job = createJob(
+      { ours: 'o.xlsx', partner: 'p.xlsx' },
+      { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
+    );
+    job.pendingConfirmation = {
+      side: 'ours',
+      reason: 'test',
+      preview: { headers: [], columnLetters: [], rows: [], stats: [], totalRows: 0 },
+      suggested: { headerRowIndex: 0, dataStartRowIndex: 1, columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null }, confidence: 0.5, source: 'heuristic', reasoning: [] },
+    };
+
+    expect(confirmMapping(job.id, {
+      headerRowIndex: 0,
+      dataStartRowIndex: 1,
+      columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null },
+    })).toBe(true);
+  });
+});
