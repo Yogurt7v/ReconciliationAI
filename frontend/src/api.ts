@@ -75,6 +75,54 @@ export interface TestAnalyzeResponse {
   debug: AiDebugInfo;
 }
 
+export interface MatchedPair {
+  a: Transaction;
+  b: Transaction;
+  amountMatch: boolean;
+  diff: number;
+}
+
+export type DocType = 'продажа' | 'приход' | 'оплата' | 'остаток' | 'прочее';
+
+export interface ComparisonRow {
+  side: 'A' | 'B';
+  tx: Transaction;
+  docType: DocType;
+  matchedWith: Transaction | null;
+  status: 'match' | 'partial' | 'unmatched';
+  diff?: number;
+}
+
+export interface ComparisonResult {
+  balanceCheck: {
+    closingA: number;
+    closingB: number;
+    match: boolean;
+    diff: number;
+  };
+  turnoverCheck: {
+    debitA: number;
+    creditA: number;
+    debitB: number;
+    creditB: number;
+    debitA_eq_debitB: boolean;
+    creditA_eq_creditB: boolean;
+  };
+  rows: ComparisonRow[];
+}
+
+export type PairStatus = 'match' | 'partial' | 'unmatched-a' | 'unmatched-b';
+
+export interface ComparisonPair {
+  index: number;
+  pairStatus: PairStatus;
+  typeA: DocType;
+  typeB: DocType;
+  a: ComparisonRow | null;
+  b: ComparisonRow | null;
+  diff?: number;
+}
+
 export const api = {
   testAnalyze(file: File): Promise<TestAnalyzeResponse> {
     const form = new FormData();

@@ -758,85 +758,363 @@
 ## Session Memory
 
 ### User Instructions
-- None captured yet.
+- …
 
 ### Long Horizon Context
-- None captured yet.
+- …
 
 ### Decisions
-- None captured yet.
+- …
 
 ### Conclusions
-- None captured yet.
+- …
 
 ### Active References
-- None captured yet.
+- …
 
-</existing_memory>
+<existing_memory>
+## Session Memory
 
-<conversation_update>
-USER:
-новое задние. в ветке тест сделай отдельную страницу для тестирования. мне нужен ипут для файла, кнопка для начала анализа и страница результата. мы будем править общее задание для ИИ чтобы он научился находить то что мне нужно и сравнивать то что мне нужно. задай как можно больше уточняющих вопросов.
+### User Instructions
+- …
 
----
+### Long Horizon Context
+- …
 
-ASSISTANT:
-Let me explore the codebase first to understand the current structure before asking clarifying questions.
-</conversation_update>
+### Decisions
+- …
 
-</existing_memory>
+### Conclusions
+- …
 
-<conversation_update>
-USER:
-новое задние. в ветке тест сделай отдельную страницу для тестирования. мне нужен ипут для файла, кнопка для начала анализа и страница результата. мы будем править общее задание для ИИ чтобы он научился находить то что мне нужно и сравнивать то что мне нужно. задай как можно больше уточняющих вопросов.
+### Active References
+- …
 
----
+<existing_memory>
+## Session Memory
 
-ASSISTANT:
-Let me explore the codebase to understand the current structure before asking questions.
+### User Instructions
+- …
 
----
+### Long Horizon Context
+- …
 
-ASSISTANT:
-Хорошо, я изучил весь код проекта. Теперь задаю уточняющие вопросы, чтобы сделать план максимально точным.
+### Decisions
+- …
 
----
+### Conclusions
+- …
 
-## Вопросы по тестовой странице
+### Active References
+- …
 
-1. **Цель страницы** — это будет упрощённый экран для быстрого тестирования ИИ-промпта (загрузил файл → посмотрел что ИИ вернул), или полноценный пайплайн как текущий (upload → structure → confirmation → reconciliation → report)?
+<existing_memory>
+## Session Memory
 
-2. **Количество файлов** — на текущей странице загрузки два слота (наш + партнёр) + чекбокс "двусторонний акт". На тестовой странице сколько файлов загружать: один, два, или让用户 choosing?
+### User Instructions
+- …
 
-3. **Формат файлов** — только XLSX, только PDF, или оба формата?
+### Long Horizon Context
+- …
 
-4. **Что именно хотите "научить" ИИ находить?** Текущие промпты делают:
-   - Определение структуры таблицы (какие колонки — номер документа, дата, сумма, дебет, кредит)
-   - Парсинг двусторонних актов сверки
-   - Генерация гипотез о расхождениях
-   
-   Какие **новые** задачи хотите добавить? Например:
-   - Поиск 특정ных строк/документов по критериям?
-   - Сравнение сумм между двумя файлами по-другому (не только по номеру документа)?
-   - Классификация строк (оплата, штраф, пеня и т.д.)?
-   - Извлечение доп. полей (ИНН, контрагент, назначение платежа)?
-   - Что-то ещё?
+### Decisions
+- …
 
-5. **Что значит "сравнивать то что мне нужно"?** Текущее сравнение — точное совпадение номера документа + сравнение сумм. Какие ещё виды сравнения интересуют:
-   - По наименованию контрагента?
-   - По диапазону дат?
-   - По сумме с допуском (например, разница до 10 рублей)?
-   - По назначению платежа?
+### Conclusions
+- …
 
-6. **Результат анализа** — что должно отображаться на странице результатов:
-   - Just raw JSON-ответ ИИ?
-   - Красиво оформленная таблица с результатами?
-   - Diff-вью (что нашёл ИИ vs что ожидается)?
-   - Всё вместе + лог рассуждений ИИ?
+### Active References
+- …
 
-7. **Промпт** — вы хотите:
-   - Модифицировать **один из текущих** промптов (structureAssist, structuredParse, hypotheses)?
-   - Создать **новый промпт** с нуля?
-   - Или это будет **отдельный тестовый промпт**, который потом интегрируется в основной пайплайн?
+<existing_memory>
+## Session Memory
 
-8. **Автоматический vs ручной режим** — после загрузки файла пайплайн должен:
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions
+- …
+
+### Long Horizon Context
+- …
+
+### Decisions
+- …
+
+### Conclusions
+- …
+
+### Active References
+- …
+
+<existing_memory>
+## Session Memory
+
+### User Instructions

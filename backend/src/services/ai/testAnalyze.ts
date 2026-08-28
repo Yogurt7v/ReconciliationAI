@@ -2,7 +2,9 @@
  * Тестовый AI-сервис: извлечение данных из бухгалтерской таблицы.
  *
  * Задача: найти сальдо, обороты, договоры и проверить баланс.
- * Поддерживает двухсторонние акты сверки — анализирует только левую часть.
+ * Поддерживает два формата:
+ *   1. Простой (ответный акт): сальдо → операции → обороты → сальдо
+ *   2. Сложный (двухсторонний): договоры с заголовками, каждый со своими сальдо
  */
 
 import type { Grid } from '@recon/shared';
@@ -66,6 +68,7 @@ interface AiDocumentResponse {
   turnoverDebit?: number | null;
   turnoverCredit?: number | null;
   contracts?: AiContract[];
+  transactions?: AiTransaction[];
 }
 
 /* ------------------------------- Промпт ---------------------------------- */
@@ -74,49 +77,48 @@ const SYSTEM_PROMPT = `Ты — эксперт по извлечению дан�
 
 Тебе дают содержимое таблицы как двумерный массив строк. Каждая строка — массив значений ячеек.
 
-Формат: двухсторонний акт сверки. Таблица имеет 8 колонок:
-- Левая сторона (наши данные): Дата, Документ, Дебет, Кредит (колонки 0-3)
-- Правая сторона (данные партнёра): Дата, Документ, Дебет, Кредит (колонки 4-7)
+## Два формата документа:
 
+### Формат 1: Простой (ответный акт)
+3-4 колонки: Дата, Документ, Дебет, Кредит.
+Нет заголовков договоров. Структура:
+- "Сальдо начальное"
+- Операции (строки с датой)
+- "Обороты за период"
+- "Сальдо конечное"
+
+### Формат 2: Сложный (двухсторонний)
+8 колонок: левая сторона (колонки 0-3) и правая (колонки 4-7).
 Анализируй ТОЛЬКО ЛЕВУЮ СТОРОНУ (колонки 0-3).
+Структура:
+- "Сальдо начальное" (верхний уровень)
+- Строки "Договор №..." — заголовки договоров
+- После каждого заголовка: сальдо, операции, обороты по договору, сальдо конечное
+- В конце: "Обороты за период" и "Сальдо конечное"
 
-Структура документа:
-1. Строка "Сальдо начальное" — верхний уровень (первое число в кредитовой колонке)
-2. Строки "Договор №..." — заголовки договоров
-3. После заголовка договора: "Сальдо начальное" по договору
-4. Строки с датой и документом — операции по договору
-5. Строка "Обороты по договору" — итоги по договору
-6. Строка "Сальдо конечное" — конечный баланс по договору
-7. В конце: "Обороты за период" — общие итоги
-8. Последняя строка: "Сальдо конечное" — общий конечный баланс
+## Правила извлечения:
 
-Извлеки:
-1. Верхнее сальдо начальное и конечное
-2. Общие обороты за период (дебет и кредит)
-3. Список договоров с их сальдо и оборотами
-4. Операции по каждому договору (только строки с датой и документом)
+1. Определи формат по содержимому (есть ли заголовки "Договор №...")
+2. Извлеки сальдо начальное и конечное (верхний уровень)
+3. Извлеки обороты за период (дебет и кредит)
+4. Если формат сложный — извлеки договоры с их сальдо и операциями
+5. Если формат простой — верни ОДИН договор с именем "Основной" и всеми операциями
 
-Важно:
+## Важно:
 - Суммы с пробелами: "59 802,47" → 59802.47
 - Пустая сумма или прочерк → 0
-- Договор без операций — верни пустой массив transactions
 - Даты в формате как в файле
+- Строка "Обороты за период" содержит дебет и кредит — смотри по заголовкам колонок таблицы
 
-Ответь строго JSON без markdown:
+## Ответ (строго JSON без markdown):
+
+Для сложного формата:
 {
   "openingBalance": 1199813494.25,
   "closingBalance": 1121091988.21,
-  "turnoverDebit": 99972439.14,
-  "turnoverCredit": 21250933.10,
+  "turnoverDebit": 21250933.10,
+  "turnoverCredit": 99972439.14,
   "contracts": [
-    {
-      "name": "Договор №23КС-226 (адм. штраф) от 27.11.2023",
-      "openingBalance": 135000,
-      "closingBalance": 135000,
-      "turnoverDebit": null,
-      "turnoverCredit": null,
-      "transactions": []
-    },
     {
       "name": "Договор №24П-069 от 13.05.2024",
       "openingBalance": 515329527.32,
@@ -124,8 +126,34 @@ const SYSTEM_PROMPT = `Ты — эксперт по извлечению дан�
       "turnoverDebit": 16124095,
       "turnoverCredit": 2096132.35,
       "transactions": [
-        { "date": "10.02.26", "document": "Продажа (3 от 10.02.2026)", "debit": 1177600, "credit": null },
-        { "date": "27.02.26", "document": "Оплата (603 от 26.02.2026)", "debit": null, "credit": 2096132.35 }
+        { "date": "10.02.26", "document": "Продажа (3 от 10.02.2026)", "debit": 1177600, "credit": null }
+      ]
+    }
+  ]
+}
+
+Для простого формата:
+{
+  "openingBalance": 59802.47,
+  "closingBalance": 249746.74,
+  "turnoverDebit": 181334.58,
+  "turnoverCredit": 371278.85,
+  "contracts": [
+    {
+      "name": "Основной",
+      "openingBalance": 59802.47,
+      "closingBalance": 249746.74,
+      "turnoverDebit": 181334.58,
+      "turnoverCredit": 371278.85,
+      "transactions": [
+        { "date": "31.01.26", "document": "Приход (Ф-01-007458 от 31.01.2026)", "debit": null, "credit": 63669.07 },
+        { "date": "28.02.26", "document": "Приход (Ф-02-007236 от 28.02.2026)", "debit": null, "credit": 52614.66 },
+        { "date": "31.03.26", "document": "Приход (Ф-03-007763 от 31.03.2026)", "debit": null, "credit": 65050.85 },
+        { "date": "06.04.26", "document": "Оплата (479 от 06.04.2026)", "debit": 116283.73, "credit": null },
+        { "date": "20.04.26", "document": "Оплата (512 от 17.04.2026)", "debit": 65050.85, "credit": null },
+        { "date": "30.04.26", "document": "Приход (Ф-04-008028 от 30.04.2026)", "debit": null, "credit": 60799.18 },
+        { "date": "31.05.26", "document": "Приход (Ф-05-008340 от 31.05.2026)", "debit": null, "credit": 64731.98 },
+        { "date": "30.06.26", "document": "Приход (Ф-06-008491 от 30.06.2026)", "debit": null, "credit": 64413.11 }
       ]
     }
   ]
@@ -154,6 +182,19 @@ function parseNumberOrNull(val: unknown): number | null {
   return n || null;
 }
 
+function parseTransactions(raw: AiTransaction[] | undefined): Transaction[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((t): t is AiTransaction => typeof t === 'object' && t !== null)
+    .slice(0, 2000)
+    .map((t) => ({
+      date: typeof t.date === 'string' ? t.date : '',
+      document: typeof t.document === 'string' ? t.document : '',
+      debit: parseNumberOrNull(t.debit),
+      credit: parseNumberOrNull(t.credit),
+    }));
+}
+
 /* ----------------------------- Валидация --------------------------------- */
 
 function validateAndBuild(raw: AiDocumentResponse): DocumentData {
@@ -162,7 +203,7 @@ function validateAndBuild(raw: AiDocumentResponse): DocumentData {
   const turnoverDebit = parseNumberOrNull(raw.turnoverDebit);
   const turnoverCredit = parseNumberOrNull(raw.turnoverCredit);
 
-  const contracts: Contract[] = Array.isArray(raw.contracts)
+  let contracts: Contract[] = Array.isArray(raw.contracts)
     ? raw.contracts
         .filter((c): c is AiContract => typeof c === 'object' && c !== null)
         .slice(0, 100)
@@ -172,19 +213,23 @@ function validateAndBuild(raw: AiDocumentResponse): DocumentData {
           closingBalance: parseNumber(c.closingBalance),
           turnoverDebit: parseNumberOrNull(c.turnoverDebit),
           turnoverCredit: parseNumberOrNull(c.turnoverCredit),
-          transactions: Array.isArray(c.transactions)
-            ? c.transactions
-                .filter((t): t is AiTransaction => typeof t === 'object' && t !== null)
-                .slice(0, 2000)
-                .map((t) => ({
-                  date: typeof t.date === 'string' ? t.date : '',
-                  document: typeof t.document === 'string' ? t.document : '',
-                  debit: parseNumberOrNull(t.debit),
-                  credit: parseNumberOrNull(t.credit),
-                }))
-            : [],
+          transactions: parseTransactions(c.transactions),
         }))
     : [];
+
+  // Если contracts пустой, но есть transactions на верхнем уровне — простой формат
+  if (contracts.length === 0 && Array.isArray(raw.transactions) && raw.transactions.length > 0) {
+    contracts = [
+      {
+        name: 'Основной',
+        openingBalance,
+        closingBalance,
+        turnoverDebit,
+        turnoverCredit,
+        transactions: parseTransactions(raw.transactions),
+      },
+    ];
+  }
 
   let totalRows = 0;
   for (const c of contracts) {
