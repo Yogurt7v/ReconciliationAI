@@ -4,6 +4,12 @@ import { FileIcon, UploadCloudIcon } from './icons';
 
 const ACCEPT = '.xlsx,.xls,.pdf';
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
 interface DropZoneProps {
   label: string;
   file: File | null;
@@ -56,7 +62,9 @@ export function DropZone({
         <>
           <FileIcon className="dropzone-icon" />
           <div className="dropzone-file">{file.name}</div>
-          <div className="dropzone-hint">{busy ? 'Анализ...' : 'Нажмите или перетащите другой'}</div>
+          <div className="dropzone-hint">
+            {busy ? 'Анализ...' : `${formatFileSize(file.size)} · Нажмите или перетащите другой`}
+          </div>
         </>
       ) : (
         <>

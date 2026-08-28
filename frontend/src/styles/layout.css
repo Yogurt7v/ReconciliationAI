@@ -1,0 +1,74 @@
+/* ============================================================
+   Layout — page container, grids, responsive framework
+   ============================================================ */
+
+/* ---- Page Container ---- */
+
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--sp-8) var(--sp-5) var(--sp-16);
+}
+
+/* ---- Two-Column Grids ---- */
+
+.upload-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.results-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.result-column {
+  min-width: 0;
+}
+
+/* ---- Upload Actions Row ---- */
+
+.upload-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  justify-content: end;
+  margin-top: var(--sp-6);
+}
+
+.upload-actions .muted {
+  font-size: var(--text-sm);
+}
+
+/* ---- Compare Actions ---- */
+
+.compare-actions {
+  text-align: center;
+  margin: var(--sp-6) 0;
+}
+
+/* ---- Responsive: Tablet (768px+) ---- */
+
+@media (min-width: 768px) {
+  .page {
+    padding: var(--sp-10) var(--sp-8) var(--sp-16);
+  }
+}
+
+/* ---- Responsive: Mobile (< 640px) ---- */
+
+@media (max-width: 639px) {
+  .upload-grid,
+  .results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .upload-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

@@ -89,6 +89,8 @@ export interface ComparisonRow {
 
 export interface ComparisonResult {
   balanceCheck: {
+    openingA: number;
+    openingB: number;
     closingA: number;
     closingB: number;
     match: boolean;

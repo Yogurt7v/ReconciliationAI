@@ -10,6 +10,7 @@ import { DebugCard } from '../components/DebugCard';
 import { ContractBlock } from '../components/ContractBlock';
 import { EditableValue } from '../components/EditableValue';
 import { ComparisonCard } from '../components/ComparisonCard';
+import { SwapIcon } from '../components/icons';
 
 const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
 
@@ -137,6 +138,8 @@ export default function MainScreen({ onBack }: Props) {
 
     setComparison({
       balanceCheck: {
+        openingA: a.openingBalance,
+        openingB: b.openingBalance,
         closingA: a.closingBalance,
         closingB: b.closingBalance,
         match: balanceMatch,
@@ -157,10 +160,10 @@ export default function MainScreen({ onBack }: Props) {
   return (
     <div>
       {/* Upload zone */}
-      <div className="card">
+      <div className="card animate-in">
         <div className="card-header">
           <h2>ИИ Анализ актов сверок</h2>
-          <p className="muted" style={{ marginTop: 'var(--sp-2)', fontSize: 'var(--text-sm)' }}>
+          <p className="muted card-subtitle">
             Загрузите два файла — ИИ извлечёт данные. Можно править вручную. А потом сравнит их.
           </p>
         </div>
@@ -214,8 +217,9 @@ export default function MainScreen({ onBack }: Props) {
 
       {/* Compare button */}
       {slotA.slot.data && slotB.slot.data && (
-        <div style={{ textAlign: 'center', margin: 'var(--sp-4) 0' }}>
+        <div className="compare-actions">
           <button className="btn btn-primary" onClick={compare}>
+            <SwapIcon />
             Сверить
           </button>
         </div>
@@ -249,9 +253,13 @@ function ResultColumn({ slot, label, updaters }: ResultColumnProps) {
   if (slot.busy) {
     return (
       <div className="result-column">
-        <div className="card" style={{ textAlign: 'center', padding: 'var(--sp-8)' }}>
-          <div className="spinner" />
-          <div style={{ marginTop: 'var(--sp-4)', fontSize: 'var(--text-sm)' }}>Анализ файла {label}...</div>
+        <div className="card card--centered">
+          <div className="skeleton skeleton-row" style={{ width: '60%', margin: '0 auto var(--sp-2)' }} />
+          <div className="skeleton skeleton-row" style={{ width: '80%', margin: '0 auto var(--sp-2)' }} />
+          <div className="skeleton skeleton-row" style={{ width: '40%', margin: '0 auto' }} />
+          <div className="mt-3" style={{ fontSize: 'var(--text-sm)', color: 'var(--ink-muted)' }}>
+            Анализ файла {label}...
+          </div>
         </div>
       </div>
     );
@@ -294,10 +302,10 @@ function ResultCard({ slot, label, updaters }: ResultCardProps) {
   const d = slot.debugError;
 
   return (
-    <div className="card">
+    <div className="card animate-in">
       <div className="card-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-          <h2 style={{ fontSize: 'var(--text-base)' }}>Файл {label}</h2>
+        <div className="flex-gap-3">
+          <h2 className="card-title">Файл {label}</h2>
           <span className="badge badge-info">{slot.result?.fileName}</span>
           {slot.result?.sheetName && <span className="badge badge-info">{slot.result.sheetName}</span>}
         </div>
@@ -311,7 +319,7 @@ function ResultCard({ slot, label, updaters }: ResultCardProps) {
       {data.contracts.length === 0 ? (
         <div className="empty-state">Договоры не найдены</div>
       ) : (
-        <div style={{ marginBottom: 'var(--sp-3)' }}>
+        <div className="mb-3">
           {data.contracts.map((contract, i) => (
             <ContractBlock
               key={i}
@@ -348,18 +356,16 @@ function ResultCard({ slot, label, updaters }: ResultCardProps) {
       </div>
 
       {d && (
-        <details style={{ marginTop: 'var(--sp-3)' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 'var(--text-sm)', color: 'var(--ink-muted)' }}>
-            Диагностика AI
-          </summary>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', background: 'var(--paper)', padding: 'var(--sp-3)', borderRadius: 'var(--radius-md)', marginTop: 'var(--sp-2)', lineHeight: '1.6' }}>
+        <details>
+          <summary>Диагностика AI</summary>
+          <div className="details-code-panel">
             <div><strong>Модель:</strong> {d.model}</div>
             <div><strong>HTTP статус:</strong> {d.httpStatus ?? '---'}</div>
             <div><strong>Попыток:</strong> {d.attempts}</div>
             <div><strong>Длина ответа:</strong> {d.contentLength} символов</div>
             <div><strong>Ошибка:</strong> {d.errorMessage ?? '---'}</div>
             {d.rawPreview && (
-              <pre style={{ margin: 'var(--sp-2) 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: '100px', overflow: 'auto' }}>
+              <pre className="details-pre">
                 {d.rawPreview}
               </pre>
             )}
@@ -367,11 +373,9 @@ function ResultCard({ slot, label, updaters }: ResultCardProps) {
         </details>
       )}
 
-      <details style={{ marginTop: 'var(--sp-2)' }}>
-        <summary style={{ cursor: 'pointer', fontSize: 'var(--text-sm)', color: 'var(--ink-muted)' }}>
-          Raw JSON
-        </summary>
-        <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', background: 'var(--paper)', padding: 'var(--sp-3)', borderRadius: 'var(--radius-md)', overflow: 'auto', maxHeight: '200px', marginTop: 'var(--sp-2)' }}>
+      <details>
+        <summary>Raw JSON</summary>
+        <pre className="details-json-pre">
           {JSON.stringify(data, null, 2)}
         </pre>
       </details>
