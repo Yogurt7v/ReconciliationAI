@@ -21,6 +21,7 @@ import { parsePdf } from './parsers/pdfParser.js';
 import { rateLimiter } from './rateLimit.js';
 import { aiConfigFromEnv } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
+import { aiCompare, fallbackCompare } from './services/ai/compareAssist.js';
 
 const app = Fastify({
   logger: {
@@ -137,6 +138,49 @@ app.post('/api/test/analyze', async (req, reply) => {
 /* ---------------------------------- Здоровье ------------------------------ */
 
 app.get('/api/health', async () => ({ ok: true }));
+
+/* ----------------------------- AI-сравнение ------------------------------ */
+
+interface CompareBody {
+  ours: import('./services/ai/testAnalyze.js').DocumentData;
+  partner: import('./services/ai/testAnalyze.js').DocumentData;
+}
+
+app.post('/api/compare', async (req, reply) => {
+  const body = req.body as CompareBody | undefined;
+  if (!body || typeof body !== 'object') {
+    return reply.code(400).send({ error: 'Тело запроса обязательно.' });
+  }
+
+  const { ours, partner } = body;
+
+  if (!ours || !partner) {
+    return reply.code(400).send({ error: 'Поля "ours" и "partner" обязательны.' });
+  }
+
+  const config = aiConfigFromEnv();
+
+  try {
+    if (config.apiKey) {
+      const { result, debug } = await aiCompare(ours, partner, config);
+      return reply.send({ ...result, debug });
+    }
+    // Fallback без AI
+    const result = fallbackCompare(ours, partner);
+    return reply.send(result);
+  } catch (err) {
+    app.log.warn(err, 'AI compare failed, using fallback');
+    const result = fallbackCompare(ours, partner);
+    return reply.send({
+      ...result,
+      aiFallback: true,
+      debug: {
+        model: config.model,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+});
 
 /* ---------------------------------- Старт --------------------------------- */
 

@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from 'react';
 import { MAX_FILE_SIZE_BYTES } from '@recon/shared';
 
 import { api, ApiError } from '../api';
-import type { ComparisonResult, DocumentData } from '../api';
+import type { AiCompareResult, ComparisonRow, DocumentData } from '../api';
 import { useEditableData, emptySlot } from '../hooks/useEditableData';
 import { DropZone } from '../components/DropZone';
 import { DebugCard } from '../components/DebugCard';
@@ -11,8 +11,67 @@ import { ContractBlock } from '../components/ContractBlock';
 import { EditableValue } from '../components/EditableValue';
 import { ComparisonCard } from '../components/ComparisonCard';
 import { SwapIcon } from '../components/icons';
+import { detectDocType, canMatchTypes } from '../utils';
 
 const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
+
+function buildRows(a: DocumentData, b: DocumentData): ComparisonRow[] {
+  const txsA = a.contracts.flatMap((c) => c.transactions);
+  const txsB = b.contracts.flatMap((c) => c.transactions);
+
+  const rowsA: ComparisonRow[] = [];
+  const rowsB: ComparisonRow[] = [];
+  const usedB = new Set<number>();
+
+  for (const txA of txsA) {
+    const typeA = detectDocType(txA.document);
+    const amtA = txA.debit ?? txA.credit ?? 0;
+
+    let bestJ = -1;
+    let bestDiff = Infinity;
+    for (let j = 0; j < txsB.length; j++) {
+      if (usedB.has(j)) continue;
+      const txB = txsB[j];
+      if (!txB) continue;
+      const typeB = detectDocType(txB.document);
+      if (!canMatchTypes(typeA, typeB)) continue;
+      const amtB = txB.debit ?? txB.credit ?? 0;
+      const diff = Math.abs(amtA - amtB);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestJ = j;
+      }
+    }
+
+    if (bestJ >= 0 && bestDiff < 0.02) {
+      const txB = txsB[bestJ];
+      if (txB) {
+        rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: txB, status: 'match' });
+        rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: txA, status: 'match' });
+        usedB.add(bestJ);
+      }
+    } else if (bestJ >= 0 && bestDiff < 1) {
+      const txB = txsB[bestJ];
+      if (txB) {
+        rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: txB, status: 'partial', diff: bestDiff });
+        rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: txA, status: 'partial', diff: bestDiff });
+        usedB.add(bestJ);
+      }
+    } else {
+      rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: null, status: 'unmatched' });
+    }
+  }
+
+  for (let j = 0; j < txsB.length; j++) {
+    if (usedB.has(j)) continue;
+    const txB = txsB[j];
+    if (txB) {
+      rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: null, status: 'unmatched' });
+    }
+  }
+
+  return [...rowsA, ...rowsB];
+}
 
 interface Props {
   onBack?: () => void;
@@ -23,7 +82,8 @@ export default function MainScreen({ onBack }: Props) {
   const slotB = useEditableData();
   const [overA, setOverA] = useState(false);
   const [overB, setOverB] = useState(false);
-  const [comparison, setComparison] = useState<ComparisonResult | null>(null);
+  const [comparison, setComparison] = useState<AiCompareResult | null>(null);
+  const [comparing, setComparing] = useState(false);
   const inputRefA = useRef<HTMLInputElement>(null);
   const inputRefB = useRef<HTMLInputElement>(null);
 
@@ -64,98 +124,50 @@ export default function MainScreen({ onBack }: Props) {
 
   const analyzeBoth = useCallback(async () => {
     await Promise.all([
-      analyzeSlot(slotA.slot, slotA.setSlot),
-      analyzeSlot(slotB.slot, slotB.setSlot),
+      !slotA.slot.data ? analyzeSlot(slotA.slot, slotA.setSlot) : Promise.resolve(),
+      !slotB.slot.data ? analyzeSlot(slotB.slot, slotB.setSlot) : Promise.resolve(),
     ]);
-  }, [slotA.slot.file, slotB.slot.file, analyzeSlot]);
+  }, [slotA.slot.file, slotB.slot.file, slotA.slot.data, slotB.slot.data, analyzeSlot]);
 
-  const compare = () => {
+  const compare = useCallback(async () => {
     const a = slotA.slot.data;
     const b = slotB.slot.data;
     if (!a || !b) return;
 
-    const closingDiff = Math.abs(a.closingBalance - b.closingBalance);
-    const balanceMatch = closingDiff < 0.02;
-
-    const debitA = a.turnoverDebit ?? 0;
-    const creditA = a.turnoverCredit ?? 0;
-    const debitB = b.turnoverCredit ?? 0;
-    const creditB = b.turnoverDebit ?? 0;
-
-    const txsA = a.contracts.flatMap((c) => c.transactions);
-    const txsB = b.contracts.flatMap((c) => c.transactions);
-
-    const rowsA: import('../api').ComparisonRow[] = [];
-    const rowsB: import('../api').ComparisonRow[] = [];
-    const usedB = new Set<number>();
-
-    for (const txA of txsA) {
-      const typeA = detectDocType(txA.document);
-      const amtA = txA.debit ?? txA.credit ?? 0;
-
-      let bestJ = -1;
-      let bestDiff = Infinity;
-      for (let j = 0; j < txsB.length; j++) {
-        if (usedB.has(j)) continue;
-        const txB = txsB[j];
-        if (!txB) continue;
-        const typeB = detectDocType(txB.document);
-        if (!canMatchTypes(typeA, typeB)) continue;
-        const amtB = txB.debit ?? txB.credit ?? 0;
-        const diff = Math.abs(amtA - amtB);
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          bestJ = j;
-        }
-      }
-
-      if (bestJ >= 0 && bestDiff < 0.02) {
-        const txB = txsB[bestJ];
-        if (txB) {
-          rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: txB, status: 'match' });
-          rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: txA, status: 'match' });
-          usedB.add(bestJ);
-        }
-      } else if (bestJ >= 0 && bestDiff < 1) {
-        const txB = txsB[bestJ];
-        if (txB) {
-          rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: txB, status: 'partial', diff: bestDiff });
-          rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: txA, status: 'partial', diff: bestDiff });
-          usedB.add(bestJ);
-        }
-      } else {
-        rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: null, status: 'unmatched' });
-      }
+    const rows = buildRows(a, b);
+    setComparing(true);
+    try {
+      const result = await api.compare(a, b);
+      result.rows = rows;
+      setComparison(result);
+    } catch {
+      // Fallback: клиентское сравнение без AI
+      const closingDiff = a.closingBalance - b.closingBalance;
+      setComparison({
+        balanceCheck: {
+          openingA: a.openingBalance,
+          openingB: b.openingBalance,
+          closingA: a.closingBalance,
+          closingB: b.closingBalance,
+          match: Math.abs(closingDiff) < 0.02,
+          diff: closingDiff,
+        },
+        turnoverCheck: {
+          debitA: a.turnoverDebit ?? 0,
+          creditA: a.turnoverCredit ?? 0,
+          debitB: b.turnoverDebit ?? 0,
+          creditB: b.turnoverCredit ?? 0,
+          debitMatch: Math.abs((a.turnoverDebit ?? 0) - (b.turnoverDebit ?? 0)) < 0.02,
+          creditMatch: Math.abs((a.turnoverCredit ?? 0) - (b.turnoverCredit ?? 0)) < 0.02,
+        },
+        aiAnalysis: '',
+        rows,
+        aiFallback: true,
+      });
+    } finally {
+      setComparing(false);
     }
-
-    for (let j = 0; j < txsB.length; j++) {
-      if (usedB.has(j)) continue;
-      const txB = txsB[j];
-      if (txB) {
-        rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: null, status: 'unmatched' });
-      }
-    }
-
-    setComparison({
-      balanceCheck: {
-        openingA: a.openingBalance,
-        openingB: b.openingBalance,
-        closingA: a.closingBalance,
-        closingB: b.closingBalance,
-        match: balanceMatch,
-        diff: a.closingBalance - b.closingBalance,
-      },
-      turnoverCheck: {
-        debitA,
-        creditA,
-        debitB,
-        creditB,
-        debitA_eq_debitB: Math.abs(debitA - debitB) < 0.02,
-        creditA_eq_creditB: Math.abs(creditA - creditB) < 0.02,
-      },
-      rows: [...rowsA, ...rowsB],
-    });
-  };
+  }, [slotA.slot.data, slotB.slot.data]);
 
   return (
     <div>
@@ -207,20 +219,22 @@ export default function MainScreen({ onBack }: Props) {
           slot={slotA.slot}
           label="А"
           updaters={slotA}
+          onRetry={() => analyzeSlot(slotA.slot, slotA.setSlot)}
         />
         <ResultColumn
           slot={slotB.slot}
           label="Б"
           updaters={slotB}
+          onRetry={() => analyzeSlot(slotB.slot, slotB.setSlot)}
         />
       </div>
 
       {/* Compare button */}
       {slotA.slot.data && slotB.slot.data && (
         <div className="compare-actions">
-          <button className="btn btn-primary" onClick={compare}>
+          <button className="btn btn-primary" onClick={compare} disabled={comparing}>
             <SwapIcon />
-            Сверить
+            {comparing ? 'Сравнение...' : 'Сверить'}
           </button>
         </div>
       )}
@@ -247,9 +261,10 @@ interface ResultColumnProps {
   slot: import('../hooks/useEditableData').FileSlot;
   label: string;
   updaters: SlotUpdaters;
+  onRetry: () => void;
 }
 
-function ResultColumn({ slot, label, updaters }: ResultColumnProps) {
+function ResultColumn({ slot, label, updaters, onRetry }: ResultColumnProps) {
   if (slot.busy) {
     return (
       <div className="result-column">
@@ -270,6 +285,9 @@ function ResultColumn({ slot, label, updaters }: ResultColumnProps) {
       <div className="result-column">
         <div className="banner banner-error">{slot.error}</div>
         {slot.debugError && <DebugCard debug={slot.debugError} />}
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 'var(--sp-3)' }} onClick={onRetry}>
+          Повторить
+        </button>
       </div>
     );
   }
@@ -381,27 +399,4 @@ function ResultCard({ slot, label, updaters }: ResultCardProps) {
       </details>
     </div>
   );
-}
-
-/* ----------------------------- Helpers ----------------------------------- */
-
-function detectDocType(doc: string): import('../api').DocType {
-  const lower = doc.toLowerCase();
-  if (/продаж|реализ|выпис/.test(lower)) return 'продажа';
-  if (/приход|поступл/.test(lower)) return 'приход';
-  if (/оплат|перечислен|взнос/.test(lower)) return 'оплата';
-  if (/остат|сальдо/.test(lower)) return 'остаток';
-  return 'прочее';
-}
-
-const DOC_TYPE_MATCH: Record<import('../api').DocType, import('../api').DocType> = {
-  'продажа': 'приход',
-  'приход': 'продажа',
-  'оплата': 'оплата',
-  'остаток': 'остаток',
-  'прочее': 'прочее',
-};
-
-function canMatchTypes(a: import('../api').DocType, b: import('../api').DocType): boolean {
-  return DOC_TYPE_MATCH[a] === b || a === b;
 }

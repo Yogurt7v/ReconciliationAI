@@ -69,6 +69,28 @@ export interface TestAnalyzeResponse {
   debug: AiDebugInfo;
 }
 
+export interface AiCompareResult {
+  balanceCheck: {
+    openingA: number;
+    openingB: number;
+    closingA: number;
+    closingB: number;
+    match: boolean;
+    diff: number;
+  };
+  turnoverCheck: {
+    debitA: number;
+    creditA: number;
+    debitB: number;
+    creditB: number;
+    debitMatch: boolean;
+    creditMatch: boolean;
+  };
+  aiAnalysis: string;
+  rows: ComparisonRow[];
+  aiFallback?: boolean;
+}
+
 export interface MatchedPair {
   a: Transaction;
   b: Transaction;
@@ -124,5 +146,13 @@ export const api = {
     const form = new FormData();
     form.append('file', file);
     return request('/api/test/analyze', { method: 'POST', body: form });
+  },
+
+  compare(ours: DocumentData, partner: DocumentData): Promise<AiCompareResult> {
+    return request('/api/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ours, partner }),
+    });
   },
 };

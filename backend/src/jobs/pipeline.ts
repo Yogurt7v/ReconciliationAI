@@ -102,6 +102,13 @@ function checkCancelled(job: Job): void {
 
 /* ------------------------------ Разбор файлов ----------------------------- */
 
+function logRawSource(label: string, source: RawSource): void {
+  console.log(`\n📄 RAW DATA | ${label} | ${source.kind}, строк сетки: ${source.grid.length}`);
+  for (let i = 0; i < Math.min(15, source.grid.length); i++) {
+    console.log(`  row ${i}:`, JSON.stringify(source.grid[i]));
+  }
+}
+
 async function parseSideBuffer(buffer: Buffer, fileName: string): Promise<RawSource> {
   const lower = fileName.toLowerCase();
   if (lower.endsWith('.pdf')) {
@@ -132,11 +139,19 @@ async function resolveStructure(job: Job, role: SideRole): Promise<void> {
   const { mapping, aiUsed } = await assistStructure(source.grid);
   job.mappings[role] = mapping;
 
-  const label = role === 'ours' ? 'наш файл' : 'файл контрагента';
+  const label = role === 'ours' ? 'НАШ ФАЙЛ' : 'ФАЙЛ КОНТРАГЕНТА';
+  console.log(`\n🔍 STRUCTURE | ${label}`, JSON.stringify({
+    source: mapping.source,
+    confidence: mapping.confidence,
+    headerRow: mapping.headerRowIndex,
+    dataStart: mapping.dataStartRowIndex,
+    columns: mapping.columns,
+  }, null, 2));
+
   pushStep(
     job,
     'structure',
-    `Структура ${label}: ${mapping.source}`,
+    `Структура ${role === 'ours' ? 'наш файл' : 'файл контрагента'}: ${mapping.source}`,
     [
       ...mapping.reasoning,
       aiUsed ? '' : 'Модель не использовалась.',
@@ -195,12 +210,22 @@ function extractSide(job: Job, role: SideRole): ParsedSide {
   if (!source || !mapping) throw new Error(`Нет данных стороны ${role}`);
   const parsed = applyMapping(source, mapping, role);
 
-  const label = role === 'ours' ? 'наш файл' : 'файл контрагента';
+  const label = role === 'ours' ? 'НАШ ФАЙЛ' : 'ФАЙЛ КОНТРАГЕНТА';
+  console.log(`\n📊 EXTRACTED | ${label} | ${parsed.rows.length} строк (пропущено ${parsed.meta.rowsSkipped})`);
+  for (const row of parsed.rows) {
+    console.log(`  #${row.rowIndex}:`, JSON.stringify({
+      docNumber: row.docNumber,
+      docDate: row.docDate,
+      amount: row.amount,
+    }));
+  }
+  console.log(`  сальдо: начало=${parsed.openingBalance}, конец=${parsed.closingBalance}`);
+
   const notes = parsed.assumptions.length ? ` Допущения: ${parsed.assumptions.join(' ')}` : '';
   pushStep(
     job,
     'extraction',
-    `${label}: извлечено ${parsed.meta.rowsExtracted} строк`,
+    `${role === 'ours' ? 'наш файл' : 'файл контрагента'}: извлечено ${parsed.meta.rowsExtracted} строк`,
     `Пропущено служебных строк: ${parsed.meta.rowsSkipped}.${notes}`,
   );
   return parsed;
@@ -226,6 +251,9 @@ export async function runPipeline(jobId: string): Promise<void> {
     ]);
     job.sources.ours = oursSource;
     job.sources.partner = partnerSource;
+
+    logRawSource('НАШ ФАЙЛ', oursSource);
+    logRawSource('ФАЙЛ КОНТРАГЕНТА', partnerSource);
 
     const describe = (s: RawSource): string => {
       const kindLabel =
@@ -261,6 +289,12 @@ export async function runPipeline(jobId: string): Promise<void> {
           // party_2 (partner в structuredParse) = правая сторона = наши
           // Нам нужна только сторона партнёра (party_1 → twoSided.ours)
           partnerParsed = twoSided.ours;
+
+          console.log(`\n📄 TWO-SIDED PDF | ФАЙЛ КОНТРАГЕНТА | распознано через AI`);
+          console.log(`  сторона контрагента: ${partnerParsed.rows.length} строк`);
+          for (const row of partnerParsed.rows.slice(0, 10)) {
+            console.log(`  #${row.rowIndex}:`, JSON.stringify(row));
+          }
 
           pushStep(
             job,
@@ -302,6 +336,16 @@ export async function runPipeline(jobId: string): Promise<void> {
           oursParsed = twoSided.ours;
           partnerParsed = twoSided.partner;
 
+          console.log(`\n📄 TWO-SIDED PDF | наш файл | распознано через AI`);
+          console.log(`  наша сторона: ${oursParsed.rows.length} строк`);
+          for (const row of oursParsed.rows.slice(0, 10)) {
+            console.log(`  #${row.rowIndex}:`, JSON.stringify(row));
+          }
+          console.log(`  сторона контрагента: ${partnerParsed.rows.length} строк`);
+          for (const row of partnerParsed.rows.slice(0, 10)) {
+            console.log(`  #${row.rowIndex}:`, JSON.stringify(row));
+          }
+
           pushStep(
             job,
             'structure',
@@ -316,6 +360,9 @@ export async function runPipeline(jobId: string): Promise<void> {
       // Обе стороны уже извлечены — переходим сразу к reconciliation
       checkCancelled(job);
       updateStage(job, 'reconciliation', 'Сопоставление документов…');
+      console.log(`\n⚖️ RECONCILE | наш файл: ${oursParsed.rows.length} строк, контрагент: ${partnerParsed.rows.length} строк`);
+      console.log(`  наши первые 5:`, oursParsed.rows.slice(0, 5).map(r => r.docNumber));
+      console.log(`  контрагент первые 5:`, partnerParsed.rows.slice(0, 5).map(r => r.docNumber));
       coreResult = reconcileSides(oursParsed, partnerParsed);
       pushStep(
         job,
@@ -363,6 +410,9 @@ export async function runPipeline(jobId: string): Promise<void> {
     /* --------------------------- reconciliation ------------------------- */
     checkCancelled(job);
     updateStage(job, 'reconciliation', 'Сопоставление документов…');
+    console.log(`\n⚖️ RECONCILE | наш файл: ${oursParsed.rows.length} строк, контрагент: ${partnerParsed.rows.length} строк`);
+    console.log(`  наши первые 5:`, oursParsed.rows.slice(0, 5).map(r => r.docNumber));
+    console.log(`  контрагент первые 5:`, partnerParsed.rows.slice(0, 5).map(r => r.docNumber));
     coreResult = reconcileSides(oursParsed, partnerParsed);
     pushStep(
       job,

@@ -252,3 +252,24 @@ export interface AiStructuredResult {
   /** Оригинальный ответ AI для отладки и логирования */
   raw: unknown;
 }
+
+/** Результат AI-сравнения двух актов сверки */
+export interface AiCompareResult {
+  balanceCheck: {
+    openingA: number;
+    openingB: number;
+    closingA: number;
+    closingB: number;
+    match: boolean;
+    diff: number;
+  };
+  turnoverCheck: {
+    debitA: number;
+    creditA: number;
+    debitB: number;
+    creditB: number;
+    debitMatch: boolean;
+    creditMatch: boolean;
+  };
+  aiAnalysis: string;
+}

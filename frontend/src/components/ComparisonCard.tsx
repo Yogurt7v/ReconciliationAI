@@ -1,20 +1,20 @@
-import type { ComparisonResult } from '../api';
+import type { AiCompareResult } from '../api';
 import { fmt, buildPairs, pairStatusLabel, pairTypeLabel } from '../utils';
 import { CheckCircleIcon, AlertTriangleIcon } from './icons';
 
 interface ComparisonCardProps {
-  comparison: ComparisonResult;
+  comparison: AiCompareResult;
 }
 
 export function ComparisonCard({ comparison }: ComparisonCardProps) {
-  const { balanceCheck: bc, turnoverCheck: tc, rows } = comparison;
+  const { balanceCheck: bc, turnoverCheck: tc, aiAnalysis, rows, aiFallback } = comparison;
   const pairs = buildPairs(rows);
   const matched = pairs.filter((p) => p.pairStatus === 'match').length;
   const partial = pairs.filter((p) => p.pairStatus === 'partial').length;
   const unmatched = pairs.filter((p) => p.pairStatus.startsWith('unmatched')).length;
 
   const allBalancesMatch = bc.match;
-  const allTurnoversMatch = tc.debitA_eq_debitB && tc.creditA_eq_creditB;
+  const allTurnoversMatch = tc.debitMatch && tc.creditMatch;
   const allDocsMatch = unmatched === 0 && partial === 0;
   const allMatch = allBalancesMatch && allTurnoversMatch && allDocsMatch;
 
@@ -43,6 +43,12 @@ export function ComparisonCard({ comparison }: ComparisonCardProps) {
         </div>
       </div>
 
+      {aiFallback && (
+        <div className="banner banner-warning" style={{ marginTop: 'var(--sp-4)' }}>
+          AI-сравнение недоступно. Сальдо и обороты рассчитаны без ИИ.
+        </div>
+      )}
+
       {/* Сводная таблица */}
       <div className="card animate-in mt-4" style={{ animationDelay: '80ms' }}>
         <h3 className="card-title">Сводка</h3>
@@ -53,6 +59,7 @@ export function ComparisonCard({ comparison }: ComparisonCardProps) {
                 <th></th>
                 <th>Файл А</th>
                 <th>Файл Б</th>
+                <th>Разница</th>
                 <th>Статус</th>
               </tr>
             </thead>
@@ -61,6 +68,9 @@ export function ComparisonCard({ comparison }: ComparisonCardProps) {
                 <td className="summary-label">Сальдо начальное</td>
                 <td className="summary-num">{fmt(bc.openingA)}</td>
                 <td className="summary-num">{fmt(bc.openingB)}</td>
+                <td className="summary-num">
+                  {bc.openingA !== bc.openingB ? fmt(bc.openingA - bc.openingB) : '—'}
+                </td>
                 <td className={bc.openingA === bc.openingB ? 'summary-ok' : 'summary-fail'}>
                   {bc.openingA === bc.openingB ? '✓' : '✗'}
                 </td>
@@ -69,30 +79,47 @@ export function ComparisonCard({ comparison }: ComparisonCardProps) {
                 <td className="summary-label">Сальдо конечное</td>
                 <td className="summary-num">{fmt(bc.closingA)}</td>
                 <td className="summary-num">{fmt(bc.closingB)}</td>
+                <td className="summary-num">
+                  {bc.match ? '—' : fmt(Math.abs(bc.diff))}
+                </td>
                 <td className={bc.match ? 'summary-ok' : 'summary-fail'}>
-                  {bc.match ? '✓' : `✗ ${fmt(Math.abs(bc.diff))}`}
+                  {bc.match ? '✓' : '✗'}
                 </td>
               </tr>
               <tr>
-                <td className="summary-label">Оборот дебет</td>
+                <td className="summary-label">Оборот Д-К</td>
                 <td className="summary-num">{fmt(tc.debitA)}</td>
                 <td className="summary-num">{fmt(tc.debitB)}</td>
-                <td className={tc.debitA_eq_debitB ? 'summary-ok' : 'summary-fail'}>
-                  {tc.debitA_eq_debitB ? '✓' : '✗'}
+                <td className="summary-num">
+                  {!tc.debitMatch ? fmt(Math.abs(tc.debitA - tc.debitB)) : '—'}
+                </td>
+                <td className={tc.debitMatch ? 'summary-ok' : 'summary-fail'}>
+                  {tc.debitMatch ? '✓' : '✗'}
                 </td>
               </tr>
               <tr>
-                <td className="summary-label">Оборот кредит</td>
+                <td className="summary-label">Оборот К-Д</td>
                 <td className="summary-num">{fmt(tc.creditA)}</td>
                 <td className="summary-num">{fmt(tc.creditB)}</td>
-                <td className={tc.creditA_eq_creditB ? 'summary-ok' : 'summary-fail'}>
-                  {tc.creditA_eq_creditB ? '✓' : '✗'}
+                <td className="summary-num">
+                  {!tc.creditMatch ? fmt(Math.abs(tc.creditA - tc.creditB)) : '—'}
+                </td>
+                <td className={tc.creditMatch ? 'summary-ok' : 'summary-fail'}>
+                  {tc.creditMatch ? '✓' : '✗'}
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* AI-анализ */}
+      {/* aiAnalysis && (
+        <div className="card animate-in mt-4" style={{ animationDelay: '120ms' }}>
+          <h3 className="card-title">Анализ AI</h3>
+          <p style={{ lineHeight: 1.6, color: 'var(--ink-secondary)' }}>{aiAnalysis}</p>
+        </div>
+      ) */}
 
       {/* Пары документов */}
       {pairs.length > 0 && (

@@ -64,6 +64,7 @@
 .btn-sm {
   font-size: var(--text-sm);
   padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-4);
   min-height: 36px;
   border-radius: var(--radius-sm);
 }
@@ -72,6 +73,7 @@
 .btn-xs {
   font-size: var(--text-xs);
   padding: var(--sp-1) var(--sp-2);
+  margin-bottom: var(--sp-2);
   min-height: 28px;
   border-radius: var(--radius-sm);
 }
@@ -111,6 +113,12 @@
   background: var(--bad-bg);
   border: 1px solid var(--bad-border);
   color: var(--bad);
+}
+
+.banner-warning {
+  background: var(--warn-bg, #fef3c7);
+  border: 1px solid var(--warn-border, #f59e0b);
+  color: var(--warn, #d97706);
 }
 
 /* ---- Spinner ---- */
@@ -212,7 +220,7 @@
 .contract-op-line {
   display: flex;
   gap: var(--sp-3);
-  justify-content: space-around;
+  justify-content: space-between;
   font-size: var(--text-xs);
   padding: var(--sp-1) 0;
   border-bottom: 1px solid var(--line);
