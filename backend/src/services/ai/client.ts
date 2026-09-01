@@ -8,21 +8,15 @@
  *  - debug-информация для диагностики на фронтенде.
  */
 
+import type { AiDebugInfo } from '@recon/shared';
+
+export type { AiDebugInfo };
+
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 export interface AiConfig {
   apiKey: string | null;
   model: string;
-}
-
-/** Диагностическая информация о вызове AI */
-export interface AiDebugInfo {
-  model: string;
-  httpStatus: number | null;
-  contentLength: number;
-  errorMessage: string | null;
-  rawPreview: string | null;
-  attempts: number;
 }
 
 /** Конфиг из окружения (читается в момент вызова — удобно для тестов) */

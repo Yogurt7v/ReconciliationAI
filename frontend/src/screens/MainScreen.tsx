@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from 'react';
 import { MAX_FILE_SIZE_BYTES } from '@recon/shared';
 
 import { api, ApiError } from '../api';
-import type { AiCompareResult, ComparisonRow, DocumentData } from '../api';
+import type { CompareResult, DocumentData } from '../api';
 import { useEditableData, emptySlot } from '../hooks/useEditableData';
 import { DropZone } from '../components/DropZone';
 import { DebugCard } from '../components/DebugCard';
@@ -11,78 +11,20 @@ import { ContractBlock } from '../components/ContractBlock';
 import { EditableValue } from '../components/EditableValue';
 import { ComparisonCard } from '../components/ComparisonCard';
 import { SwapIcon } from '../components/icons';
-import { detectDocType, canMatchTypes } from '../utils';
 
 const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
 
-function buildRows(a: DocumentData, b: DocumentData): ComparisonRow[] {
-  const txsA = a.contracts.flatMap((c) => c.transactions);
-  const txsB = b.contracts.flatMap((c) => c.transactions);
-
-  const rowsA: ComparisonRow[] = [];
-  const rowsB: ComparisonRow[] = [];
-  const usedB = new Set<number>();
-
-  for (const txA of txsA) {
-    const typeA = detectDocType(txA.document);
-    const amtA = txA.debit ?? txA.credit ?? 0;
-
-    let bestJ = -1;
-    let bestDiff = Infinity;
-    for (let j = 0; j < txsB.length; j++) {
-      if (usedB.has(j)) continue;
-      const txB = txsB[j];
-      if (!txB) continue;
-      const typeB = detectDocType(txB.document);
-      if (!canMatchTypes(typeA, typeB)) continue;
-      const amtB = txB.debit ?? txB.credit ?? 0;
-      const diff = Math.abs(amtA - amtB);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        bestJ = j;
-      }
-    }
-
-    if (bestJ >= 0 && bestDiff < 0.02) {
-      const txB = txsB[bestJ];
-      if (txB) {
-        rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: txB, status: 'match' });
-        rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: txA, status: 'match' });
-        usedB.add(bestJ);
-      }
-    } else if (bestJ >= 0 && bestDiff < 1) {
-      const txB = txsB[bestJ];
-      if (txB) {
-        rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: txB, status: 'partial', diff: bestDiff });
-        rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: txA, status: 'partial', diff: bestDiff });
-        usedB.add(bestJ);
-      }
-    } else {
-      rowsA.push({ side: 'A', tx: txA, docType: typeA, matchedWith: null, status: 'unmatched' });
-    }
-  }
-
-  for (let j = 0; j < txsB.length; j++) {
-    if (usedB.has(j)) continue;
-    const txB = txsB[j];
-    if (txB) {
-      rowsB.push({ side: 'B', tx: txB, docType: detectDocType(txB.document), matchedWith: null, status: 'unmatched' });
-    }
-  }
-
-  return [...rowsA, ...rowsB];
-}
-
 interface Props {
+  model: string;
   onBack?: () => void;
 }
 
-export default function MainScreen({ onBack }: Props) {
+export default function MainScreen({ model, onBack }: Props) {
   const slotA = useEditableData();
   const slotB = useEditableData();
   const [overA, setOverA] = useState(false);
   const [overB, setOverB] = useState(false);
-  const [comparison, setComparison] = useState<AiCompareResult | null>(null);
+  const [comparison, setComparison] = useState<(CompareResult & { debug?: import('../api').AiDebugInfo }) | null>(null);
   const [comparing, setComparing] = useState(false);
   const inputRefA = useRef<HTMLInputElement>(null);
   const inputRefB = useRef<HTMLInputElement>(null);
@@ -109,7 +51,7 @@ export default function MainScreen({ onBack }: Props) {
     if (!slot.file) return;
     setSlot((s) => ({ ...s, busy: true, error: null, debugError: null }));
     try {
-      const res = await api.testAnalyze(slot.file);
+      const res = await api.testAnalyze(slot.file, model);
       setSlot((s) => ({ ...s, result: res, data: structuredClone(res.result), busy: false }));
     } catch (err) {
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
@@ -120,7 +62,7 @@ export default function MainScreen({ onBack }: Props) {
         busy: false,
       }));
     }
-  }, []);
+  }, [model]);
 
   const analyzeBoth = useCallback(async () => {
     await Promise.all([
@@ -134,40 +76,45 @@ export default function MainScreen({ onBack }: Props) {
     const b = slotB.slot.data;
     if (!a || !b) return;
 
-    const rows = buildRows(a, b);
     setComparing(true);
     try {
-      const result = await api.compare(a, b);
-      result.rows = rows;
+      const result = await api.compare(a, b, model);
       setComparison(result);
-    } catch {
-      // Fallback: клиентское сравнение без AI
-      const closingDiff = a.closingBalance - b.closingBalance;
+    } catch (err) {
+      const debug = err instanceof ApiError ? (err.debug ?? null) : null;
       setComparison({
-        balanceCheck: {
-          openingA: a.openingBalance,
-          openingB: b.openingBalance,
-          closingA: a.closingBalance,
-          closingB: b.closingBalance,
-          match: Math.abs(closingDiff) < 0.02,
-          diff: closingDiff,
-        },
-        turnoverCheck: {
-          debitA: a.turnoverDebit ?? 0,
-          creditA: a.turnoverCredit ?? 0,
-          debitB: b.turnoverDebit ?? 0,
-          creditB: b.turnoverCredit ?? 0,
+        summary: {
+          yourTotalRows: a.totalRows,
+          partnerTotalRows: b.totalRows,
+          yourOpeningBalance: a.openingBalance,
+          partnerOpeningBalance: b.openingBalance,
+          yourClosingBalance: a.closingBalance,
+          partnerClosingBalance: b.closingBalance,
+          yourTurnoverDebit: a.turnoverDebit ?? 0,
+          partnerTurnoverDebit: b.turnoverDebit ?? 0,
+          yourTurnoverCredit: a.turnoverCredit ?? 0,
+          partnerTurnoverCredit: b.turnoverCredit ?? 0,
+          openingMatch: Math.abs(a.openingBalance - b.openingBalance) < 0.02,
+          closingMatch: Math.abs(a.closingBalance - b.closingBalance) < 0.02,
           debitMatch: Math.abs((a.turnoverDebit ?? 0) - (b.turnoverDebit ?? 0)) < 0.02,
           creditMatch: Math.abs((a.turnoverCredit ?? 0) - (b.turnoverCredit ?? 0)) < 0.02,
+          openingDiff: b.openingBalance - a.openingBalance,
+          closingDiff: b.closingBalance - a.closingBalance,
+          debitDiff: (b.turnoverDebit ?? 0) - (a.turnoverDebit ?? 0),
+          creditDiff: (b.turnoverCredit ?? 0) - (a.turnoverCredit ?? 0),
         },
-        aiAnalysis: '',
-        rows,
-        aiFallback: true,
+        matched: [],
+        onlyInYour: [],
+        onlyInPartner: [],
+        diffs: [],
+        finalBalance: { yourDebt: 0, partnerDebt: 0 },
+        aiAnalysis: 'Сравнение недоступно.',
+        debug: debug ?? undefined,
       });
     } finally {
       setComparing(false);
     }
-  }, [slotA.slot.data, slotB.slot.data]);
+  }, [slotA.slot.data, slotB.slot.data, model]);
 
   return (
     <div>

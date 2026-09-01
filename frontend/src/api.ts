@@ -1,3 +1,7 @@
+import type { AiDebugInfo, CompareResult, Transaction } from '@recon/shared';
+
+export type { AiDebugInfo, CompareResult, Transaction };
+
 export class ApiError extends Error {
   debug?: AiDebugInfo;
 
@@ -26,13 +30,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export interface Transaction {
-  date: string;
-  document: string;
-  debit: number | null;
-  credit: number | null;
-}
-
 export interface Contract {
   name: string;
   openingBalance: number;
@@ -51,15 +48,6 @@ export interface DocumentData {
   contracts: Contract[];
 }
 
-export interface AiDebugInfo {
-  model: string;
-  httpStatus: number | null;
-  contentLength: number;
-  errorMessage: string | null;
-  rawPreview: string | null;
-  attempts: number;
-}
-
 export interface TestAnalyzeResponse {
   fileName: string;
   sourceKind: string;
@@ -69,90 +57,19 @@ export interface TestAnalyzeResponse {
   debug: AiDebugInfo;
 }
 
-export interface AiCompareResult {
-  balanceCheck: {
-    openingA: number;
-    openingB: number;
-    closingA: number;
-    closingB: number;
-    match: boolean;
-    diff: number;
-  };
-  turnoverCheck: {
-    debitA: number;
-    creditA: number;
-    debitB: number;
-    creditB: number;
-    debitMatch: boolean;
-    creditMatch: boolean;
-  };
-  aiAnalysis: string;
-  rows: ComparisonRow[];
-  aiFallback?: boolean;
-}
-
-export interface MatchedPair {
-  a: Transaction;
-  b: Transaction;
-  amountMatch: boolean;
-  diff: number;
-}
-
-export type DocType = 'продажа' | 'приход' | 'оплата' | 'остаток' | 'прочее';
-
-export interface ComparisonRow {
-  side: 'A' | 'B';
-  tx: Transaction;
-  docType: DocType;
-  matchedWith: Transaction | null;
-  status: 'match' | 'partial' | 'unmatched';
-  diff?: number;
-}
-
-export interface ComparisonResult {
-  balanceCheck: {
-    openingA: number;
-    openingB: number;
-    closingA: number;
-    closingB: number;
-    match: boolean;
-    diff: number;
-  };
-  turnoverCheck: {
-    debitA: number;
-    creditA: number;
-    debitB: number;
-    creditB: number;
-    debitA_eq_debitB: boolean;
-    creditA_eq_creditB: boolean;
-  };
-  rows: ComparisonRow[];
-}
-
-export type PairStatus = 'match' | 'partial' | 'unmatched-a' | 'unmatched-b';
-
-export interface ComparisonPair {
-  index: number;
-  pairStatus: PairStatus;
-  typeA: DocType;
-  typeB: DocType;
-  a: ComparisonRow | null;
-  b: ComparisonRow | null;
-  diff?: number;
-}
-
 export const api = {
-  testAnalyze(file: File): Promise<TestAnalyzeResponse> {
+  testAnalyze(file: File, model?: string): Promise<TestAnalyzeResponse> {
     const form = new FormData();
     form.append('file', file);
+    if (model) form.append('model', model);
     return request('/api/test/analyze', { method: 'POST', body: form });
   },
 
-  compare(ours: DocumentData, partner: DocumentData): Promise<AiCompareResult> {
+  compare(ours: DocumentData, partner: DocumentData, model?: string): Promise<CompareResult & { debug?: AiDebugInfo }> {
     return request('/api/compare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ours, partner }),
+      body: JSON.stringify({ ours, partner, model }),
     });
   },
 };

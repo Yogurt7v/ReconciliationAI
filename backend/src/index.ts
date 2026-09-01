@@ -21,7 +21,7 @@ import { parsePdf } from './parsers/pdfParser.js';
 import { rateLimiter } from './rateLimit.js';
 import { aiConfigFromEnv } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
-import { aiCompare, fallbackCompare } from './services/ai/compareAssist.js';
+import { fullReconciliation } from './services/ai/reconciliation.js';
 
 const app = Fastify({
   logger: {
@@ -139,11 +139,12 @@ app.post('/api/test/analyze', async (req, reply) => {
 
 app.get('/api/health', async () => ({ ok: true }));
 
-/* ----------------------------- AI-сравнение ------------------------------ */
+/* ----------------------------- Сверка ------------------------------------ */
 
 interface CompareBody {
   ours: import('./services/ai/testAnalyze.js').DocumentData;
   partner: import('./services/ai/testAnalyze.js').DocumentData;
+  model?: string;
 }
 
 app.post('/api/compare', async (req, reply) => {
@@ -152,28 +153,24 @@ app.post('/api/compare', async (req, reply) => {
     return reply.code(400).send({ error: 'Тело запроса обязательно.' });
   }
 
-  const { ours, partner } = body;
+  const { ours, partner, model: modelOverride } = body;
 
   if (!ours || !partner) {
     return reply.code(400).send({ error: 'Поля "ours" и "partner" обязательны.' });
   }
 
-  const config = aiConfigFromEnv();
+  const envConfig = aiConfigFromEnv();
+  const config = { ...envConfig, model: (modelOverride?.trim()) || envConfig.model };
 
   try {
-    if (config.apiKey) {
-      const { result, debug } = await aiCompare(ours, partner, config);
-      return reply.send({ ...result, debug });
-    }
-    // Fallback без AI
-    const result = fallbackCompare(ours, partner);
-    return reply.send(result);
+    const { result, debug } = await fullReconciliation(ours, partner, config);
+    return reply.send({ ...result, debug });
   } catch (err) {
-    app.log.warn(err, 'AI compare failed, using fallback');
-    const result = fallbackCompare(ours, partner);
+    console.error('[api/compare] Reconciliation failed:', err);
+    app.log.warn(err, 'Reconciliation failed');
+    const { result } = await fullReconciliation(ours, partner);
     return reply.send({
       ...result,
-      aiFallback: true,
       debug: {
         model: config.model,
         errorMessage: err instanceof Error ? err.message : String(err),

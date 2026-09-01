@@ -253,6 +253,16 @@ export interface AiStructuredResult {
   raw: unknown;
 }
 
+/** Диагностическая информация о вызове AI */
+export interface AiDebugInfo {
+  model: string;
+  httpStatus: number | null;
+  contentLength: number;
+  errorMessage: string | null;
+  rawPreview: string | null;
+  attempts: number;
+}
+
 /** Результат AI-сравнения двух актов сверки */
 export interface AiCompareResult {
   balanceCheck: {
@@ -272,4 +282,64 @@ export interface AiCompareResult {
     creditMatch: boolean;
   };
   aiAnalysis: string;
+}
+
+/* -------------------------- Новая сверка (reconciliation) -------------------------- */
+
+/** Транзакция (общий тип для backend и frontend) */
+export interface Transaction {
+  date: string;
+  document: string;
+  debit: number | null;
+  credit: number | null;
+}
+
+/** Расхождение по конкретному документу */
+export interface TransactionDiff {
+  document: string;
+  yourDate?: string;
+  partnerDate?: string;
+  yourDebit?: number;
+  partnerDebit?: number;
+  yourCredit?: number;
+  partnerCredit?: number;
+  diff: number;
+  reason: 'missing_in_partner' | 'missing_in_your' | 'amount_mismatch' | 'direction_mismatch' | 'date_mismatch';
+  description: string;
+}
+
+/** Сопоставленная пара документов */
+export interface MatchedPair {
+  your: Transaction;
+  partner: Transaction;
+}
+
+/** Результат детального сравнения двух актов сверки */
+export interface CompareResult {
+  summary: {
+    yourTotalRows: number;
+    partnerTotalRows: number;
+    yourOpeningBalance: number;
+    partnerOpeningBalance: number;
+    yourClosingBalance: number;
+    partnerClosingBalance: number;
+    yourTurnoverDebit: number;
+    partnerTurnoverDebit: number;
+    yourTurnoverCredit: number;
+    partnerTurnoverCredit: number;
+    openingMatch: boolean;
+    closingMatch: boolean;
+    debitMatch: boolean;
+    creditMatch: boolean;
+    openingDiff: number;
+    closingDiff: number;
+    debitDiff: number;
+    creditDiff: number;
+  };
+  matched: MatchedPair[];
+  onlyInYour: Transaction[];
+  onlyInPartner: Transaction[];
+  diffs: TransactionDiff[];
+  finalBalance: { yourDebt: number; partnerDebt: number };
+  aiAnalysis?: string;
 }
