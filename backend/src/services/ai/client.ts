@@ -15,12 +15,26 @@ export type { AiDebugInfo };
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// Fallback-модели в порядке приоритета (от более умной к более доступной)
-export const FALLBACK_MODELS = [
+// Fallback-модели в порядке приоритета (от более умной к более доступной).
+// Переопределяются через AI_FALLBACK_MODELS (список через запятую, пустая строка — отключает).
+export const DEFAULT_FALLBACK_MODELS = [
   'meta-llama/llama-3-70b-instruct',
   'mistralai/mistral-large',
-  'qwen/qwen-2.5-coder-32b-instruct',
 ];
+
+export function fallbackModelsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.AI_FALLBACK_MODELS;
+  if (raw === undefined) return DEFAULT_FALLBACK_MODELS;
+  return raw
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+}
+
+// Бюджет запросов: основная модель — до 2 попыток (повтор при 5xx/сети),
+// каждая fallback-модель — 1 попытка. Суммарно максимум ~4 запроса.
+const PRIMARY_MAX_ATTEMPTS = 2;
+const FALLBACK_MAX_ATTEMPTS = 1;
 
 export interface AiConfig {
   apiKey: string | null;
@@ -152,8 +166,9 @@ export async function requestJson<T>(
     { role: 'user', content: JSON.stringify(userPayload) },
   ];
 
-  // Список моделей для попытки: основная + fallback
-  const modelsToTry = [config.model, ...FALLBACK_MODELS.filter(m => m !== config.model)];
+  // Список моделей для попытки: основная + fallback (бюджет ограничен)
+  const fallbacks = fallbackModelsFromEnv().filter((m) => m !== config.model);
+  const modelsToTry = [config.model, ...fallbacks];
   let fallbackUsed = false;
 
   const debug: AiDebugInfo = {
@@ -163,24 +178,26 @@ export async function requestJson<T>(
     errorMessage: null,
     rawPreview: null,
     attempts: 0,
+    fallbackUsed: false,
   };
 
   let lastError: AiUnavailableError | null = null;
 
-  for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
-    const currentModel = modelsToTry[modelIndex];
-    if (!currentModel) continue; // Пропускаем undefined модели
-    
-    if (modelIndex > 0) {
+  modelLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
+    const currentModel = modelsToTry[modelIndex]!;
+    const isPrimary = modelIndex === 0;
+    const maxAttempts = isPrimary ? PRIMARY_MAX_ATTEMPTS : FALLBACK_MAX_ATTEMPTS;
+
+    if (!isPrimary) {
       fallbackUsed = true;
       console.warn(`[AI] Основная модель недоступна, пробуем fallback: ${currentModel}`);
     }
-    
-    // Для каждой модели пробуем до 2 раз (основная попытка + 1 retry)
-    for (let attempt = 0; attempt < 2; attempt++) {
-      debug.attempts = modelIndex * 2 + attempt + 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      debug.attempts++;
       debug.model = currentModel;
-      
+      debug.fallbackUsed = fallbackUsed;
+
       try {
         const result = await callOnce({ ...config, model: currentModel }, messages, timeoutMs);
         debug.httpStatus = result.httpStatus;
@@ -213,21 +230,20 @@ export async function requestJson<T>(
             ? err
             : new AiUnavailableError('Сетевая ошибка OpenRouter', String(err), undefined, fallbackUsed);
         debug.errorMessage = lastError.detail ?? lastError.message;
-        
-        if (!lastError.retryable) break;
-        // Задержка перед повтором только внутри одной модели
-        if (attempt === 0) {
+        debug.httpStatus = lastError.status ?? debug.httpStatus;
+
+        // Невременная ошибка (400/401/404...) — смена модели не поможет, стоп.
+        if (!lastError.retryable) break modelLoop;
+
+        // Повтор внутри одной модели: только первая попытка.
+        if (attempt === 0 && maxAttempts > 1) {
           await new Promise((r) => setTimeout(r, 1000));
         }
       }
     }
-    
-    // Если модель исчерпана и это был fallback, переходим к следующей
-    if (modelIndex < modelsToTry.length - 1) {
-      await new Promise((r) => setTimeout(r, 500));
-    }
+    // Никакой паузы между моделями — сразу следующая fallback-модель.
   }
-  
+
   // Все модели исчерпаны
   if (lastError) {
     lastError.debug = debug;

@@ -59,7 +59,51 @@ describe('requestJson', () => {
     await expect(requestJson({ apiKey: 'k', model: 'm' }, 'sys', {})).rejects.toBeInstanceOf(
       AiUnavailableError,
     );
+    // 400 — невременная ошибка: смена модели не поможет, один запрос
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('бюджет попыток: основная модель 2 раза, каждая fallback — 1 (сеть недоступна)', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Основная 'm' + 2 дефолтные fallback-модели, все не отвечают
+    const err = await requestJson({ apiKey: 'k', model: 'm' }, 'sys', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(AiUnavailableError);
+    expect(fetchMock).toHaveBeenCalledTimes(4); // 2 + 1 + 1
+    expect((err as AiUnavailableError).debug?.attempts).toBe(4);
+  });
+
+  it('использует fallback-модель при сбое основной и помечает fallbackUsed', async () => {
+    process.env.AI_FALLBACK_MODELS = 'fb-one,fb-two';
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":1}' } }] }), { status: 200 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await requestJson<{ ok: number }>({ apiKey: 'k', model: 'm' }, 'sys', {});
+    expect(out.data).toEqual({ ok: 1 });
+    expect(out.debug.fallbackUsed).toBe(true);
+    expect(out.debug.attempts).toBe(3); // m×2 → fb-one×1
+    const models = fetchMock.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(models[0]!.model).toBe('m');
+    expect(models[2]!.model).toBe('fb-one');
+    delete process.env.AI_FALLBACK_MODELS;
+  });
+
+  it('пустой AI_FALLBACK_MODELS отключает fallback', async () => {
+    process.env.AI_FALLBACK_MODELS = '';
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await requestJson({ apiKey: 'k', model: 'm' }, 'sys', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(AiUnavailableError);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // только основная, с одним повтором
+    delete process.env.AI_FALLBACK_MODELS;
   });
 
   it('бросает ошибку на невалидном JSON в ответе модели', async () => {

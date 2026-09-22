@@ -277,6 +277,17 @@ function ResultCard({ slot, label, updaters }: ResultCardProps) {
         </div>
       </div>
 
+      {slot.result?.warnings && slot.result.warnings.length > 0 && (
+        <div className="banner banner-warning">
+          <strong>Внимание:</strong>
+          <ul className="mt-2 mb-0 ps-4">
+            {slot.result.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="balance-row">
         <span className="balance-label">Сальдо начальное</span>
         <EditableValue value={data.openingBalance} onChange={(v) => updaters.updateData({ openingBalance: v })} />

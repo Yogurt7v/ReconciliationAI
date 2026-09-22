@@ -91,8 +91,7 @@ app.post('/api/test/analyze', async (req, reply) => {
         return reply.code(413).send({ error: message });
       }
     } else if (part.type === 'field' && part.fieldname === 'apiKey') {
-      const value = await (part as any).toBuffer();
-      clientApiKey = value.toString().trim() || undefined;
+      clientApiKey = String(part.value).trim() || undefined;
     }
   }
 
@@ -133,13 +132,14 @@ app.post('/api/test/analyze', async (req, reply) => {
   const config = { ...envConfig, apiKey: clientApiKey ?? envConfig.apiKey };
 
   try {
-    const { result, debug } = await testAnalyze(source.grid, config);
+    const { result, warnings, debug } = await testAnalyze(source.grid, config);
     return reply.send({
       fileName: uploaded.filename,
       sourceKind: source.kind,
       sheetName: source.sheetName,
       pages: source.pages,
       result,
+      warnings,
       debug,
     });
   } catch (err) {

@@ -54,6 +54,8 @@ export interface TestAnalyzeResponse {
   sheetName: string | null;
   pages: number | null;
   result: DocumentData;
+  /** Проблемы согласованности данных, найденные при валидации */
+  warnings?: string[];
   debug: AiDebugInfo;
 }
 
