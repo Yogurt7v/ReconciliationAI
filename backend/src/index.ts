@@ -1,195 +1,94 @@
-/**
- * HTTP API backend'а (Fastify 5).
- *
- * Маршруты:
- *  POST /api/test/analyze — AI-анализ одного файла
- *
- * Запуск: PORT из окружения (по умолчанию 5057, т.к. 5000 занят AirPlay на macOS), CORS открыт для dev-фронта.
- */
+import express from 'express';
+import cors from 'cors';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { structuredParse } from './services/structuredParse';
+import { compareDocuments } from './services/comparisonService';
+import { generateReport } from './services/reportGenerator';
+import { AiUnavailableError } from './services/ai/errors';
 
-import { config } from 'dotenv';
-config({ path: new URL('../../.env', import.meta.url) });
+const app = express();
+const PORT = process.env.PORT || 3001;
 
-import cors from '@fastify/cors';
-import multipart from '@fastify/multipart';
-import Fastify from 'fastify';
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
 
-import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES } from '@recon/shared';
+// Настройка хранилища файлов
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-import { parseExcel } from './parsers/excelParser.js';
-import { parsePdf } from './parsers/pdfParser.js';
-import { rateLimiter } from './rateLimit.js';
-import { aiConfigFromEnv } from './services/ai/client.js';
-import { testAnalyze } from './services/ai/testAnalyze.js';
-import { fullReconciliation } from './services/ai/reconciliation.js';
-
-const app = Fastify({
-  logger: {
-    level: process.env.LOG_LEVEL ?? 'info',
-    transport:
-      process.env.NODE_ENV === 'production'
-        ? undefined
-        : { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname', singleLine: true } },
-  },
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
+const upload = multer({ storage });
 
-await app.register(cors, { origin: true });
-await app.register(multipart, {
-  limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 2 },
-});
+// Тестовый анализ с поддержкой клиентского API Key
+app.post('/api/test/analyze', upload.array('files', 2), async (req, res) => {
+  try {
+    const files = req.files as Express.Multer.File[];
+    const apiKey = req.headers['x-api-key'] as string | undefined;
+    const model = req.headers['x-model'] as string | undefined;
 
-app.addHook('onRequest', rateLimiter);
-
-/* --------------------------------- Upload --------------------------------- */
-
-interface UploadedFile {
-  filename: string;
-  buffer: Buffer;
-}
-
-const EXT_RE = new RegExp(`(${ALLOWED_EXTENSIONS.map((e) => e.replace('.', '\\.')).join('|')})$`, 'i');
-
-function validateFile(file: UploadedFile): string | null {
-  if (!EXT_RE.test(file.filename)) {
-    return `Недопустимый тип файла «${file.filename}». Разрешены: ${ALLOWED_EXTENSIONS.join(', ')}.`;
-  }
-  if (file.buffer.length === 0) return `Файл «${file.filename}» пуст.`;
-  return null;
-}
-
-async function readUploadFile(part: unknown): Promise<UploadedFile> {
-  const p = part as { filename: string; toBuffer(): Promise<Buffer> };
-  return { filename: p.filename, buffer: await p.toBuffer() };
-}
-
-/* ----------------------------- Тестовый анализ ---------------------------- */
-
-app.post('/api/test/analyze', async (req, reply) => {
-  let uploaded: UploadedFile | null = null;
-
-  for await (const part of req.parts()) {
-    if (part.type === 'file' && part.fieldname === 'file') {
-      try {
-        uploaded = await readUploadFile(part);
-      } catch (err) {
-        const message =
-          err instanceof Error && /limit/i.test(err.message)
-            ? `Файл больше ${Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024))} МБ.`
-            : 'Не удалось прочитать файл.';
-        return reply.code(413).send({ error: message });
-      }
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'Файлы не загружены' });
     }
-  }
 
-  if (!uploaded) {
-    return reply.code(400).send({ error: 'Поле file обязательно.' });
-  }
+    console.log(`📂 Обработка файлов: ${files.map(f => f.filename).join(', ')}`);
+    console.log(`🔑 API Key предоставлен: ${!!apiKey}`);
+    console.log(`🤖 Модель: ${model || 'default'}`);
 
-  const problem = validateFile(uploaded);
-  if (problem) return reply.code(400).send({ error: problem });
+    const result = await structuredParse(files, { apiKey, model });
+    res.json(result);
+  } catch (error: any) {
+    console.error('❌ Ошибка анализа:', error);
 
-  const ext = uploaded.filename.toLowerCase();
-  let source;
-
-  try {
-    if (ext.endsWith('.xlsx') || ext.endsWith('.xls')) {
-      source = parseExcel(uploaded.buffer, uploaded.filename);
-    } else if (ext.endsWith('.pdf')) {
-      source = await parsePdf(uploaded.buffer, uploaded.filename);
-    } else {
-      return reply.code(400).send({ error: 'Неподдерживаемый формат файла.' });
+    if (error instanceof AiUnavailableError) {
+      return res.status(503).json({
+        error: 'AI сервис недоступен',
+        details: error.message,
+        fallbackUsed: error.fallbackUsed
+      });
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Ошибка парсинга файла';
-    return reply.code(422).send({ error: `Не удалось распарсить файл: ${message}` });
+
+    res.status(500).json({ error: error.message || 'Внутренняя ошибка сервера' });
   }
+});
 
-  if (source.needsOcr) {
-    return reply.code(422).send({
-      error: 'Файл похож на скан (нет текстового слоя). OCR пока не поддерживается на тестовой странице.',
-    });
-  }
-
-  if (source.grid.length === 0) {
-    return reply.code(422).send({ error: 'Файл не содержит данных (пустая таблица).' });
-  }
-
-  const config = aiConfigFromEnv();
-
+// Сравнение документов
+app.post('/api/compare', upload.array('files', 2), async (req, res) => {
   try {
-    const { result, debug } = await testAnalyze(source.grid, config);
-    return reply.send({
-      fileName: uploaded.filename,
-      sourceKind: source.kind,
-      sheetName: source.sheetName,
-      pages: source.pages,
-      result,
-      debug,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Неизвестная ошибка AI';
-    const detail = err instanceof Error && 'detail' in err ? (err as { detail?: unknown }).detail : undefined;
-    const debug = err instanceof Error && 'debug' in err ? (err as { debug?: unknown }).debug : undefined;
-    const fullMessage = detail ? `${message} (${detail})` : message;
-    return reply.code(502).send({ error: `AI-анализ не удался: ${fullMessage}`, debug });
+    const files = req.files as Express.Multer.File[];
+    const apiKey = req.headers['x-api-key'] as string | undefined;
+    const model = req.headers['x-model'] as string | undefined;
+
+    if (!files || files.length !== 2) {
+      return res.status(400).json({ error: 'Требуется ровно 2 файла для сравнения' });
+    }
+
+    const result = await compareDocuments(files, { apiKey, model });
+    res.json(result);
+  } catch (error: any) {
+    console.error('❌ Ошибка сравнения:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-/* ---------------------------------- Здоровье ------------------------------ */
-
-app.get('/api/health', async () => ({ ok: true }));
-
-/* ----------------------------- Сверка ------------------------------------ */
-
-interface CompareBody {
-  ours: import('./services/ai/testAnalyze.js').DocumentData;
-  partner: import('./services/ai/testAnalyze.js').DocumentData;
-  model?: string;
-}
-
-app.post('/api/compare', async (req, reply) => {
-  const body = req.body as CompareBody | undefined;
-  if (!body || typeof body !== 'object') {
-    return reply.code(400).send({ error: 'Тело запроса обязательно.' });
-  }
-
-  const { ours, partner, model: modelOverride } = body;
-
-  if (!ours || !partner) {
-    return reply.code(400).send({ error: 'Поля "ours" и "partner" обязательны.' });
-  }
-
-  const envConfig = aiConfigFromEnv();
-  const config = { ...envConfig, model: (modelOverride?.trim()) || envConfig.model };
-
+// Генерация отчета
+app.post('/api/report', async (req, res) => {
   try {
-    const { result, debug } = await fullReconciliation(ours, partner, config);
-    return reply.send({ ...result, debug });
-  } catch (err) {
-    console.error('[api/compare] Reconciliation failed:', err);
-    app.log.warn(err, 'Reconciliation failed');
-    const { result } = await fullReconciliation(ours, partner);
-    return reply.send({
-      ...result,
-      debug: {
-        model: config.model,
-        errorMessage: err instanceof Error ? err.message : String(err),
-      },
-    });
+    const { data, format = 'html' } = req.body;
+    if (!data) return res.status(400).json({ error: 'Нет данных для отчета' });
+
+    const reportPath = await generateReport(data, format);
+    res.json({ url: `/reports/${path.basename(reportPath)}` });
+  } catch (error: any) {
+    console.error('❌ Ошибка генерации отчета:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-/* ---------------------------------- Старт --------------------------------- */
-
-process.on('unhandledRejection', (err) => {
-  app.log.error(err, 'Unhandled rejection');
+app.listen(PORT, () => {
+  console.log(`🚀 Сервер запущен на порту ${PORT}`);
 });
-
-const port = Number(process.env.PORT ?? 5057);
-
-try {
-  await app.listen({ port, host: '0.0.0.0' });
-} catch (err) {
-  app.log.error(err);
-  process.exit(1);
-}

@@ -1,25 +1,26 @@
-import { useState, useCallback } from 'react';
-
-import { DEFAULT_MODEL, MODEL_STORAGE_KEY } from '../config';
-
-function readStored(): string {
-  try {
-    return localStorage.getItem(MODEL_STORAGE_KEY) || DEFAULT_MODEL;
-  } catch {
-    return DEFAULT_MODEL;
-  }
-}
+import { useState, useEffect } from 'react';
+import { DEFAULT_MODEL, API_KEY_STORAGE_KEY } from '../config';
 
 export function useModelSetting() {
-  const [model, setModelState] = useState<string>(readStored);
+  const [model, setModel] = useState<string>(() => {
+    return localStorage.getItem('selected_ai_model') || DEFAULT_MODEL;
+  });
 
-  const setModel = useCallback((next: string) => {
-    const value = next.trim() || DEFAULT_MODEL;
-    setModelState(value);
-    try {
-      localStorage.setItem(MODEL_STORAGE_KEY, value);
-    } catch { /* noop */ }
-  }, []);
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+  });
 
-  return [model, setModel] as const;
+  useEffect(() => {
+    localStorage.setItem('selected_ai_model', model);
+  }, [model]);
+
+  useEffect(() => {
+    if (apiKey) {
+      localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+    } else {
+      localStorage.removeItem(API_KEY_STORAGE_KEY);
+    }
+  }, [apiKey]);
+
+  return [model, setModel, apiKey, setApiKey] as const;
 }

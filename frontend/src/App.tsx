@@ -1,24 +1,34 @@
-import { useState } from 'react';
-
-import { useModelSetting } from './hooks/useModelSetting';
-import { SettingsButton } from './components/SettingsButton';
+import React, { useState } from 'react';
+import { MainScreen } from './components/MainScreen';
 import { ModelModal } from './components/ModelModal';
-import MainScreen from './screens/MainScreen';
+import { useModelSetting } from './hooks/useModelSetting';
 
-export default function App() {
-  const [model, setModel] = useModelSetting();
-  const [modalOpen, setModalOpen] = useState(false);
+function App() {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [model, setModel, apiKey, setApiKey] = useModelSetting();
+
+  const handleSaveSettings = (newModel: string, newApiKey: string) => {
+    setModel(newModel);
+    setApiKey(newApiKey);
+  };
 
   return (
-    <main className="page">
-      <SettingsButton onClick={() => setModalOpen(true)} />
-      <ModelModal
-        open={modalOpen}
-        model={model}
-        onClose={() => setModalOpen(false)}
-        onSave={setModel}
+    <div className="min-h-screen bg-gray-50">
+      <MainScreen
+        onOpenSettings={() => setIsModalOpen(true)}
+        currentModel={model}
+        apiKey={apiKey}
       />
-      <MainScreen model={model} />
-    </main>
+
+      <ModelModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        currentModel={model}
+        currentApiKey={apiKey}
+        onSave={handleSaveSettings}
+      />
+    </div>
   );
 }
+
+export default App;

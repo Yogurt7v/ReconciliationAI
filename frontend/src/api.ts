@@ -1,75 +1,81 @@
-import type { AiDebugInfo, CompareResult, Transaction } from '@recon/shared';
+const API_URL = 'http://localhost:3001';
 
-export type { AiDebugInfo, CompareResult, Transaction };
-
-export class ApiError extends Error {
-  debug?: AiDebugInfo;
-
-  constructor(
-    message: string,
-    public readonly status: number,
-  ) {
-    super(message);
-  }
+export interface AnalysisResult {
+  extractedData: any[];
+  reasoningLog: string[];
+  warnings?: string[];
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const body: unknown = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message =
-      body !== null && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
-        ? body.error
-        : `Ошибка запроса (${res.status})`;
-    const err = new ApiError(message, res.status);
-    if (body !== null && typeof body === 'object' && 'debug' in body) {
-      err.debug = body.debug as AiDebugInfo;
+export interface ComparisonResult {
+  matches: any[];
+  discrepancies: any[];
+  summary: string;
+}
+
+export async function testAnalyze(
+  files: File[],
+  apiKey?: string,
+  model?: string
+): Promise<AnalysisResult> {
+  const formData = new FormData();
+  files.forEach(file => formData.append('files', file));
+
+  const headers: HeadersInit = {};
+  if (apiKey) headers['X-API-Key'] = apiKey;
+  if (model) headers['X-Model'] = model;
+
+  const response = await fetch(`${API_URL}/api/test/analyze`, {
+    method: 'POST',
+    body: formData,
+    headers
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    if (response.status === 503) {
+      throw new Error(`AI недоступен: ${errorData.details || 'Попробуйте другую модель'}`);
     }
-    throw err;
+    throw new Error(errorData.error || 'Ошибка анализа');
   }
-  return body as T;
+
+  return response.json();
 }
 
-export interface Contract {
-  name: string;
-  openingBalance: number;
-  closingBalance: number;
-  turnoverDebit: number | null;
-  turnoverCredit: number | null;
-  transactions: Transaction[];
+export async function compareDocuments(
+  files: File[],
+  apiKey?: string,
+  model?: string
+): Promise<ComparisonResult> {
+  const formData = new FormData();
+  files.forEach(file => formData.append('files', file));
+
+  const headers: HeadersInit = {};
+  if (apiKey) headers['X-API-Key'] = apiKey;
+  if (model) headers['X-Model'] = model;
+
+  const response = await fetch(`${API_URL}/api/compare`, {
+    method: 'POST',
+    body: formData,
+    headers
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Ошибка сравнения');
+  }
+
+  return response.json();
 }
 
-export interface DocumentData {
-  totalRows: number;
-  openingBalance: number;
-  closingBalance: number;
-  turnoverDebit: number | null;
-  turnoverCredit: number | null;
-  contracts: Contract[];
+export async function generateReport(data: any, format: string = 'html'): Promise<string> {
+  const response = await fetch(`${API_URL}/api/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data, format })
+  });
+
+  if (!response.ok) throw new Error('Ошибка генерации отчета');
+
+  const result = await response.json();
+  return `${API_URL}${result.url}`;
 }
-
-export interface TestAnalyzeResponse {
-  fileName: string;
-  sourceKind: string;
-  sheetName: string | null;
-  pages: number | null;
-  result: DocumentData;
-  debug: AiDebugInfo;
-}
-
-export const api = {
-  testAnalyze(file: File, model?: string): Promise<TestAnalyzeResponse> {
-    const form = new FormData();
-    form.append('file', file);
-    if (model) form.append('model', model);
-    return request('/api/test/analyze', { method: 'POST', body: form });
-  },
-
-  compare(ours: DocumentData, partner: DocumentData, model?: string): Promise<CompareResult & { debug?: AiDebugInfo }> {
-    return request('/api/compare', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ours, partner, model }),
-    });
-  },
-};
