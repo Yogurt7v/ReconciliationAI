@@ -22,6 +22,7 @@ import { median } from '@recon/shared';
 import { loadPdfjs } from './pdfParser.js';
 import { assignColumns, segmentsToGrid, trimGridEdges } from './tableGeometry.js';
 import type { Segment } from './tableGeometry.js';
+import { analyzeImageQuality, applyAdaptivePreprocessing, calculateDynamicThreshold, type ImageQualityMetrics } from './imageQuality.js';
 
 /* ------------------------------ Типы pdf.js ------------------------------- */
 
@@ -156,7 +157,12 @@ export async function warmUpOcr(): Promise<{ dir: string; files: string[] }> {
  */
 export function buildPagesOfLinesFromWords(
   pagesOfWords: OcrWordBox[][],
+  dynamicThreshold?: { lineClusterFactor: number; cellGapFactor: number }
 ): Segment[][][] {
+  const lineFactor = dynamicThreshold?.lineClusterFactor ?? 0.7;
+  const cellGapFactor = dynamicThreshold?.cellGapFactor ?? 0.45;
+  const cellGapMaxFactor = dynamicThreshold?.cellGapFactor ? dynamicThreshold.cellGapFactor + 0.35 : 0.8;
+
   return pagesOfWords.map((words) => {
     if (words.length === 0) return [];
 
@@ -174,7 +180,7 @@ export function buildPagesOfLinesFromWords(
 
     for (const word of sorted) {
       const wc = (word.y0 + word.y1) / 2;
-      if (!Number.isNaN(centerY) && Math.abs(wc - centerY) <= medH * 0.7) {
+      if (!Number.isNaN(centerY) && Math.abs(wc - centerY) <= medH * lineFactor) {
         current.push(word);
         centerY = (centerY * (current.length - 1) + wc) / current.length;
       } else {
@@ -196,9 +202,9 @@ export function buildPagesOfLinesFromWords(
           continue;
         }
         const gap = word.x0 - buf.x1;
-        if (gap <= medH * 0.45) {
+        if (gap <= medH * cellGapFactor) {
           buf.text += word.text; // склеенный фрагмент слова
-        } else if (gap <= medH * 0.8) {
+        } else if (gap <= medH * cellGapMaxFactor) {
           buf.text += ` ${word.text}`; // соседние слова той же ячейки
         } else {
           segments.push({ ...buf, col: -1 });
@@ -220,15 +226,29 @@ function zoomFor(baseWidth: number): number {
   return Math.min(4, Math.max(2, 1800 / baseWidth));
 }
 
-async function renderPageToPng(page: RenderPageLike): Promise<Buffer> {
+async function renderPageToPng(page: RenderPageLike, qualityAnalysis?: { isNoisy: boolean; isBlurry: boolean; estimatedDpi: number; qualityScore?: number; width?: number; height?: number }): Promise<Buffer> {
   const base = page.getViewport({ scale: 1 });
-  const viewport = page.getViewport({ scale: zoomFor(base.width) });
+  
+  // Динамический масштаб на основе качества изображения
+  let scale = zoomFor(base.width);
+  if (qualityAnalysis) {
+    if (qualityAnalysis.estimatedDpi < 200 || qualityAnalysis.isBlurry) {
+      scale = Math.max(scale, 3.5); // Увеличиваем масштаб для размытых или низкого DPI
+    }
+  }
+  
+  const viewport = page.getViewport({ scale });
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
   const ctx = canvas.getContext('2d');
   await page.render({ canvasContext: ctx, viewport }).promise;
   const raw = await canvas.encode('png');
 
-  // Предобработка: ч/б + растяжка контраста — заметно повышает точность OCR
+  // Адаптивная предобработка на основе анализа качества
+  if (qualityAnalysis && (qualityAnalysis.isNoisy || qualityAnalysis.isBlurry)) {
+    return applyAdaptivePreprocessing(raw, qualityAnalysis as ImageQualityMetrics);
+  }
+  
+  // Стандартная предобработка: ч/б + растяжка контраста
   return sharp(raw).grayscale().normalise().png().toBuffer();
 }
 
@@ -249,17 +269,26 @@ export async function parsePdfWithOcr(buffer: Buffer, fileName: string): Promise
   }).promise;
 
   try {
+    // Анализируем качество первой страницы для определения параметров обработки
+    const firstPage = await doc.getPage(1);
+    const firstPng = await renderPageToPng(firstPage);
+    const qualityAnalysis = await analyzeImageQuality(firstPng);
+    firstPage.cleanup?.();
+
     const pagesOfWords: OcrWordBox[][] = [];
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
-      const png = await renderPageToPng(page);
+      const png = await renderPageToPng(page, qualityAnalysis as any);
       // В tesseract.js v6 блоки/слова по умолчанию отключены — запрашиваем явно
       const { data } = await worker.recognize(png, {}, { blocks: true });
       pagesOfWords.push(wordsFromTesseractPage(data));
       page.cleanup?.();
     }
 
-    const pagesOfLines = buildPagesOfLinesFromWords(pagesOfWords);
+    // Динамические пороги кластеризации на основе качества
+    const dynamicThreshold = calculateDynamicThreshold(qualityAnalysis);
+    
+    const pagesOfLines = buildPagesOfLinesFromWords(pagesOfWords, dynamicThreshold);
     const assignment = assignColumns(pagesOfLines);
     const rows: string[][] = segmentsToGrid(pagesOfLines, assignment);
     const grid: Grid = trimGridEdges(rows, (v) => !v).map((row) =>

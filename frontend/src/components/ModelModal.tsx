@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { AI_MODELS, DEFAULT_MODEL } from '../config';
+import { AI_MODELS, DEFAULT_MODEL, API_KEY_STORAGE_KEY } from '../config';
 import { XIcon } from './icons';
 
 interface Props {
   open: boolean;
   model: string;
+  apiKey: string;
   onClose: () => void;
-  onSave: (model: string) => void;
+  onSave: (model: string, apiKey: string) => void;
 }
 
-export function ModelModal({ open, model, onClose, onSave }: Props) {
+export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
   const [selected, setSelected] = useState(model);
   const [customValue, setCustomValue] = useState('');
   const [isCustom, setIsCustom] = useState(false);
+  const [apiKeyValue, setApiKeyValue] = useState(apiKey);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,8 +30,9 @@ export function ModelModal({ open, model, onClose, onSave }: Props) {
         setIsCustom(true);
         setCustomValue(model === DEFAULT_MODEL ? '' : model);
       }
+      setApiKeyValue(apiKey || '');
     }
-  }, [open, model]);
+  }, [open, model, apiKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -43,11 +46,13 @@ export function ModelModal({ open, model, onClose, onSave }: Props) {
   if (!open) return null;
 
   const handleSave = () => {
+    let finalModel: string;
     if (isCustom) {
-      onSave(customValue.trim() || DEFAULT_MODEL);
+      finalModel = customValue.trim() || DEFAULT_MODEL;
     } else {
-      onSave(selected || DEFAULT_MODEL);
+      finalModel = selected || DEFAULT_MODEL;
     }
+    onSave(finalModel, apiKeyValue.trim());
     onClose();
   };
 
@@ -57,17 +62,39 @@ export function ModelModal({ open, model, onClose, onSave }: Props) {
 
   return (
     <div className="modal-overlay" ref={overlayRef} onClick={handleOverlayClick}>
-      <div className="modal-panel" role="dialog" aria-label="Выбор модели ИИ">
+      <div className="modal-panel" role="dialog" aria-label="Настройки модели ИИ">
         <div className="modal-header">
-          <h3 className="modal-title">Модель ИИ</h3>
+          <h3 className="modal-title">Модель ИИ и API ключ</h3>
           <button className="modal-close" onClick={onClose} aria-label="Закрыть">
             <XIcon />
           </button>
         </div>
 
         <div className="modal-body">
+          {/* API Key Section */}
+          <div className="modal-api-key-section">
+            <label className="modal-label">
+              OpenRouter API Key
+              <input
+                className="modal-api-key-input"
+                type="password"
+                placeholder="sk-or-..."
+                value={apiKeyValue}
+                onChange={(e) => setApiKeyValue(e.target.value)}
+              />
+            </label>
+            <p className="modal-hint">
+              Ключ сохраняется локально в браузере. Получите на{' '}
+              <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">
+                openrouter.ai/keys
+              </a>
+            </p>
+          </div>
+
+          {/* Model Selection */}
           {AI_MODELS.length > 0 && (
             <div className="modal-model-list">
+              <p className="modal-label">Выберите модель:</p>
               {AI_MODELS.map((m) => (
                 <label key={m.id} className="modal-model-option">
                   <input

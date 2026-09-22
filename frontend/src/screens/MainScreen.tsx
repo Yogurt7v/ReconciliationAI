@@ -16,10 +16,11 @@ const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
 
 interface Props {
   model: string;
+  apiKey: string;
   onBack?: () => void;
 }
 
-export default function MainScreen({ model, onBack }: Props) {
+export default function MainScreen({ model, apiKey, onBack }: Props) {
   const slotA = useEditableData();
   const slotB = useEditableData();
   const [overA, setOverA] = useState(false);
@@ -51,7 +52,7 @@ export default function MainScreen({ model, onBack }: Props) {
     if (!slot.file) return;
     setSlot((s) => ({ ...s, busy: true, error: null, debugError: null }));
     try {
-      const res = await api.testAnalyze(slot.file, model);
+      const res = await api.testAnalyze(slot.file, model, apiKey);
       setSlot((s) => ({ ...s, result: res, data: structuredClone(res.result), busy: false }));
     } catch (err) {
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
@@ -62,7 +63,7 @@ export default function MainScreen({ model, onBack }: Props) {
         busy: false,
       }));
     }
-  }, [model]);
+  }, [model, apiKey]);
 
   const analyzeBoth = useCallback(async () => {
     await Promise.all([
@@ -78,7 +79,7 @@ export default function MainScreen({ model, onBack }: Props) {
 
     setComparing(true);
     try {
-      const result = await api.compare(a, b, model);
+      const result = await api.compare(a, b, model, apiKey);
       setComparison(result);
     } catch (err) {
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
@@ -114,7 +115,7 @@ export default function MainScreen({ model, onBack }: Props) {
     } finally {
       setComparing(false);
     }
-  }, [slotA.slot.data, slotB.slot.data, model]);
+  }, [slotA.slot.data, slotB.slot.data, model, apiKey]);
 
   return (
     <div>

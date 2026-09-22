@@ -1,18 +1,17 @@
 export interface AiModel {
   id: string;
   name: string;
+  provider?: 'openrouter' | 'local';
 }
 
 export const AI_MODELS: AiModel[] = [
-  { id: 'nvidia/nemotron-3-ultra:free', name: 'Nemotron 3 Ultra (free)' },
-  { id: 'google/gemma-4-31b:free', name: 'Gemma 4 31B (free)' },
-  { id: 'qwen/qwen3-next-80b-a3b-instruct:free', name: 'Qwen3 Next 80B (free)' },
-  { id: 'z-ai/glm-4.5-air:free', name: 'GLM 4.5 Air (free)' },
-  { id: 'openai/gpt-oss-120b:free', name: 'gpt-oss-120b (free)' },
-  { id: 'moonshotai/kimi-k2.6:free', name: 'Kimi K2.6 (free)' },
-  { id: 'openrouter/free', name: 'Auto-router (free)' },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini (Fast/Cheap)', provider: 'openrouter' },
+  { id: 'meta-llama/llama-3-70b-instruct', name: 'Llama 3 70B (Smart)', provider: 'openrouter' },
+  { id: 'mistralai/mistral-large', name: 'Mistral Large', provider: 'openrouter' },
+  { id: 'qwen/qwen-2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder', provider: 'openrouter' },
 ];
 
-export const DEFAULT_MODEL = 'nvidia/nemotron-3-ultra:free';
+export const DEFAULT_MODEL = 'openai/gpt-4o-mini';
 
 export const MODEL_STORAGE_KEY = 'recon-ai-model';
+export const API_KEY_STORAGE_KEY = 'recon-ai-apikey';

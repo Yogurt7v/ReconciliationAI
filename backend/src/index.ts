@@ -58,14 +58,26 @@ function validateFile(file: UploadedFile): string | null {
 }
 
 async function readUploadFile(part: unknown): Promise<UploadedFile> {
-  const p = part as { filename: string; toBuffer(): Promise<Buffer> };
-  return { filename: p.filename, buffer: await p.toBuffer() };
+  const p = part as { filename: string; toBuffer?(): Promise<Buffer>; arrayBuffer?(): Promise<ArrayBuffer> };
+  
+  if (p.toBuffer) {
+    return { filename: p.filename, buffer: await p.toBuffer() };
+  }
+  
+  // Fallback для multipart без toBuffer
+  if (p.arrayBuffer) {
+    const arrayBuffer = await p.arrayBuffer();
+    return { filename: p.filename, buffer: Buffer.from(arrayBuffer) };
+  }
+  
+  throw new Error('Не удалось прочитать файл: нет метода toBuffer или arrayBuffer');
 }
 
 /* ----------------------------- Тестовый анализ ---------------------------- */
 
 app.post('/api/test/analyze', async (req, reply) => {
   let uploaded: UploadedFile | null = null;
+  let clientApiKey: string | undefined;
 
   for await (const part of req.parts()) {
     if (part.type === 'file' && part.fieldname === 'file') {
@@ -78,6 +90,9 @@ app.post('/api/test/analyze', async (req, reply) => {
             : 'Не удалось прочитать файл.';
         return reply.code(413).send({ error: message });
       }
+    } else if (part.type === 'field' && part.fieldname === 'apiKey') {
+      const value = await (part as any).toBuffer();
+      clientApiKey = value.toString().trim() || undefined;
     }
   }
 
@@ -114,7 +129,8 @@ app.post('/api/test/analyze', async (req, reply) => {
     return reply.code(422).send({ error: 'Файл не содержит данных (пустая таблица).' });
   }
 
-  const config = aiConfigFromEnv();
+  const envConfig = aiConfigFromEnv();
+  const config = { ...envConfig, apiKey: clientApiKey ?? envConfig.apiKey };
 
   try {
     const { result, debug } = await testAnalyze(source.grid, config);
@@ -148,19 +164,19 @@ interface CompareBody {
 }
 
 app.post('/api/compare', async (req, reply) => {
-  const body = req.body as CompareBody | undefined;
+  const body = req.body as CompareBody & { apiKey?: string } | undefined;
   if (!body || typeof body !== 'object') {
     return reply.code(400).send({ error: 'Тело запроса обязательно.' });
   }
 
-  const { ours, partner, model: modelOverride } = body;
+  const { ours, partner, model: modelOverride, apiKey: clientApiKey } = body;
 
   if (!ours || !partner) {
     return reply.code(400).send({ error: 'Поля "ours" и "partner" обязательны.' });
   }
 
   const envConfig = aiConfigFromEnv();
-  const config = { ...envConfig, model: (modelOverride?.trim()) || envConfig.model };
+  const config = { ...envConfig, apiKey: clientApiKey?.trim() ?? envConfig.apiKey, model: (modelOverride?.trim()) || envConfig.model };
 
   try {
     const { result, debug } = await fullReconciliation(ours, partner, config);

@@ -5,7 +5,8 @@
  *  - таймаут на запрос и один повтор при сетевой ошибке/5xx/таймауте;
  *  - деградированный режим: без ключа или при ошибке вызывающий код
  *    откатывается к эвристикам/правилам, а деградация фиксируется в reasoning;
- *  - debug-информация для диагностики на фронтенде.
+ *  - debug-информация для диагностики на фронтенде;
+ *  - поддержка выбора модели и graceful degradation через fallback-модели.
  */
 
 import type { AiDebugInfo } from '@recon/shared';
@@ -13,6 +14,13 @@ import type { AiDebugInfo } from '@recon/shared';
 export type { AiDebugInfo };
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+// Fallback-модели в порядке приоритета (от более умной к более доступной)
+export const FALLBACK_MODELS = [
+  'meta-llama/llama-3-70b-instruct',
+  'mistralai/mistral-large',
+  'qwen/qwen-2.5-coder-32b-instruct',
+];
 
 export interface AiConfig {
   apiKey: string | null;
@@ -29,15 +37,19 @@ export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig 
 
 export class AiUnavailableError extends Error {
   debug?: AiDebugInfo;
+  fallbackUsed?: boolean;
 
   constructor(
     message: string,
     readonly detail?: string,
     /** HTTP-статус ответа OpenRouter, если был; network-ошибки без статуса */
     readonly status?: number,
+    /** Была ли использована fallback-модель */
+    fallbackUsed = false,
   ) {
     super(message);
     this.name = 'AiUnavailableError';
+    this.fallbackUsed = fallbackUsed;
   }
 
   /** Повтор имеет смысл только для «временных» проблем */
@@ -140,6 +152,10 @@ export async function requestJson<T>(
     { role: 'user', content: JSON.stringify(userPayload) },
   ];
 
+  // Список моделей для попытки: основная + fallback
+  const modelsToTry = [config.model, ...FALLBACK_MODELS.filter(m => m !== config.model)];
+  let fallbackUsed = false;
+
   const debug: AiDebugInfo = {
     model: config.model,
     httpStatus: null,
@@ -150,50 +166,75 @@ export async function requestJson<T>(
   };
 
   let lastError: AiUnavailableError | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    debug.attempts = attempt + 1;
-    try {
-      const result = await callOnce(config, messages, timeoutMs);
-      debug.httpStatus = result.httpStatus;
-      debug.contentLength = result.content.length;
-      debug.errorMessage = result.errorMessage;
-      debug.rawPreview = result.content.slice(0, 500);
 
-      if (!result.content) {
-        throw new AiUnavailableError('Пустой ответ модели');
-      }
-
+  for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
+    const currentModel = modelsToTry[modelIndex];
+    if (!currentModel) continue; // Пропускаем undefined модели
+    
+    if (modelIndex > 0) {
+      fallbackUsed = true;
+      console.warn(`[AI] Основная модель недоступна, пробуем fallback: ${currentModel}`);
+    }
+    
+    // Для каждой модели пробуем до 2 раз (основная попытка + 1 retry)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      debug.attempts = modelIndex * 2 + attempt + 1;
+      debug.model = currentModel;
+      
       try {
-        const cleaned = result.content
-          .replace(/^```(?:json)?\s*\n?/i, '')
-          .replace(/\n?\s*```\s*$/i, '')
-          .trim();
-        const data = JSON.parse(cleaned) as T;
-        return { data, debug };
-      } catch {
-        throw new AiUnavailableError(
-          'Ответ модели не является валидным JSON',
-          result.content.slice(0, 300),
-        );
-      }
-    } catch (err) {
-      lastError =
-        err instanceof AiUnavailableError
-          ? err
-          : new AiUnavailableError('Сетевая ошибка OpenRouter', String(err));
-      debug.errorMessage = lastError.detail ?? lastError.message;
-      if (!lastError.retryable) break;
-      // Задержка перед повтором
-      if (attempt === 0) {
-        await new Promise((r) => setTimeout(r, 1000));
+        const result = await callOnce({ ...config, model: currentModel }, messages, timeoutMs);
+        debug.httpStatus = result.httpStatus;
+        debug.contentLength = result.content.length;
+        debug.errorMessage = result.errorMessage;
+        debug.rawPreview = result.content.slice(0, 500);
+
+        if (!result.content) {
+          throw new AiUnavailableError('Пустой ответ модели', undefined, undefined, fallbackUsed);
+        }
+
+        try {
+          const cleaned = result.content
+            .replace(/^```(?:json)?\s*\n?/i, '')
+            .replace(/\n?\s*```\s*$/i, '')
+            .trim();
+          const data = JSON.parse(cleaned) as T;
+          return { data, debug };
+        } catch {
+          throw new AiUnavailableError(
+            'Ответ модели не является валидным JSON',
+            result.content.slice(0, 300),
+            undefined,
+            fallbackUsed,
+          );
+        }
+      } catch (err) {
+        lastError =
+          err instanceof AiUnavailableError
+            ? err
+            : new AiUnavailableError('Сетевая ошибка OpenRouter', String(err), undefined, fallbackUsed);
+        debug.errorMessage = lastError.detail ?? lastError.message;
+        
+        if (!lastError.retryable) break;
+        // Задержка перед повтором только внутри одной модели
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
       }
     }
+    
+    // Если модель исчерпана и это был fallback, переходим к следующей
+    if (modelIndex < modelsToTry.length - 1) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
+  
+  // Все модели исчерпаны
   if (lastError) {
     lastError.debug = debug;
+    lastError.fallbackUsed = fallbackUsed;
     throw lastError;
   }
-  const fallback = new AiUnavailableError('Неизвестная ошибка OpenRouter');
+  const fallback = new AiUnavailableError('Неизвестная ошибка OpenRouter', undefined, undefined, fallbackUsed);
   fallback.debug = debug;
   throw fallback;
 }

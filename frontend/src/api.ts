@@ -58,18 +58,19 @@ export interface TestAnalyzeResponse {
 }
 
 export const api = {
-  testAnalyze(file: File, model?: string): Promise<TestAnalyzeResponse> {
+  testAnalyze(file: File, model?: string, apiKey?: string): Promise<TestAnalyzeResponse> {
     const form = new FormData();
     form.append('file', file);
     if (model) form.append('model', model);
+    if (apiKey) form.append('apiKey', apiKey);
     return request('/api/test/analyze', { method: 'POST', body: form });
   },
 
-  compare(ours: DocumentData, partner: DocumentData, model?: string): Promise<CompareResult & { debug?: AiDebugInfo }> {
+  compare(ours: DocumentData, partner: DocumentData, model?: string, apiKey?: string): Promise<CompareResult & { debug?: AiDebugInfo }> {
     return request('/api/compare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ours, partner, model }),
+      body: JSON.stringify({ ours, partner, model, apiKey }),
     });
   },
 };
