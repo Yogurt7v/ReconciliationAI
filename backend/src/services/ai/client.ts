@@ -45,6 +45,79 @@ function parseModelList(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Авто-переключение провайдера по ID модели.
+ * Пользователь может выбрать локальную модель (qwen2.5:7b-instruct, llama3.1:8b и т.п.)
+ * в UI даже когда backend запущен в облачном режиме (AI_PROVIDER=openrouter).
+ * Признак Ollama-модели — отсутствие namespace-префикса "vendor/" и наличие тега ":версия"
+ * (Ollama-нотация), либо префикс "ollama/".
+ */
+export function looksLikeOllamaModel(model: string): boolean {
+  const m = model.trim();
+  if (!m) return false;
+  if (m.startsWith('ollama/')) return true;
+  // OpenRouter-модели всегда содержат "/" (например openai/gpt-4o-mini)
+  if (m.includes('/')) return false;
+  // Ollama-модели обычно имеют тег (qwen2.5:7b-instruct, llama3.2:3b)
+  return /:[\w.-]+$/.test(m);
+}
+
+/** URL Chat Completions API для Ollama (OpenAI-совместимый эндпоинт) */
+function ollamaBaseUrlFromEnv(env: NodeJS.ProcessEnv): string {
+  const host = env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
+  return `${host.replace(/\/$/, '')}/v1/chat/completions`;
+}
+
+/** Fallback-цепочка для Ollama из env или по умолчанию */
+function ollamaFallbacksFromEnv(env: NodeJS.ProcessEnv): string[] {
+  const parsed = parseModelList(env.OLLAMA_FALLBACK_MODELS);
+  return parsed.length > 0 ? parsed : DEFAULT_OLLAMA_FALLBACK_MODELS;
+}
+
+/**
+ * Применение клиентского выбора модели к конфигу окружения.
+ * Если выбрана Ollama-модель, а конфиг облачный — переключаемся на локальный
+ * провайдер (и наоборот), чтобы один backend мог обслуживать оба режима.
+ */
+export function applyClientOverrides(
+  base: AiConfig,
+  overrides: { model?: string | null; apiKey?: string | null },
+  env: NodeJS.ProcessEnv = process.env,
+): AiConfig {
+  const clientModel = overrides.model?.trim();
+  const config: AiConfig = {
+    ...base,
+    model: clientModel || base.model,
+    apiKey: overrides.apiKey?.trim() || base.apiKey,
+  };
+
+  if (!clientModel || clientModel === base.model) return config;
+
+  if (looksLikeOllamaModel(clientModel) && base.provider !== 'ollama') {
+    return {
+      ...config,
+      provider: 'ollama',
+      baseUrl: ollamaBaseUrlFromEnv(env),
+      // Ключ для Ollama не нужен, но формат Bearer требует непустого значения
+      apiKey: config.apiKey || 'ollama',
+      fallbackModels: ollamaFallbacksFromEnv(env).filter((m) => m !== clientModel),
+    };
+  }
+
+  if (!looksLikeOllamaModel(clientModel) && base.provider === 'ollama') {
+    return {
+      ...config,
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      fallbackModels: parseModelList(env.OPENROUTER_FALLBACKS).length > 0
+        ? parseModelList(env.OPENROUTER_FALLBACKS)
+        : OPENROUTER_FALLBACK_MODELS,
+    };
+  }
+
+  return config;
+}
+
 /** Конфиг из окружения (читается в момент вызова — удобно для тестов) */
 export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig {
   const provider: AiProvider = env.AI_PROVIDER?.trim().toLowerCase() === 'ollama' ? 'ollama' : 'openrouter';

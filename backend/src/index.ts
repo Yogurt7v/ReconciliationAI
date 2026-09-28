@@ -19,7 +19,7 @@ import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES } from '@recon/shared';
 import { parseExcel } from './parsers/excelParser.js';
 import { parsePdf } from './parsers/pdfParser.js';
 import { rateLimiter } from './rateLimit.js';
-import { aiConfigFromEnv, type AiConfig } from './services/ai/client.js';
+import { aiConfigFromEnv, applyClientOverrides, type AiConfig } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
 import { fullReconciliation } from './services/ai/reconciliation.js';
 
@@ -134,12 +134,12 @@ app.post('/api/test/analyze', async (req, reply) => {
   }
 
   const envConfig = aiConfigFromEnv();
-  // Клиентский apiKey/model имеют приоритет над env (для локальных моделей ключ не нужен)
-  const config: AiConfig = {
-    ...envConfig,
-    apiKey: clientApiKey ?? envConfig.apiKey,
-    model: clientModel ?? envConfig.model,
-  };
+  // Клиентский apiKey/model имеют приоритет над env (для локальных моделей ключ не нужен).
+  // applyClientOverrides сам переключает провайдера (openrouter <-> ollama) по формату ID модели.
+  const config: AiConfig = applyClientOverrides(envConfig, {
+    model: clientModel,
+    apiKey: clientApiKey,
+  });
 
   try {
     const { result, debug } = await testAnalyze(source.grid, config);
@@ -185,7 +185,10 @@ app.post('/api/compare', async (req, reply) => {
   }
 
   const envConfig = aiConfigFromEnv();
-  const config = { ...envConfig, apiKey: clientApiKey?.trim() ?? envConfig.apiKey, model: (modelOverride?.trim()) || envConfig.model };
+  const config: AiConfig = applyClientOverrides(envConfig, {
+    model: modelOverride,
+    apiKey: clientApiKey,
+  });
 
   try {
     const { result, debug } = await fullReconciliation(ours, partner, config);

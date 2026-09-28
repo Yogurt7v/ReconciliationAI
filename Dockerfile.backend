@@ -1,0 +1,27 @@
+# Backend Reconciliation AI (Fastify + tsx)
+FROM node:20-bookworm-slim AS base
+
+# pnpm через corepack + нативные зависимости для sharp/pdfjs
+RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Копируем манифесты workspace целиком — pnpm разберётся с @recon/shared
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY shared/package.json shared/
+COPY backend/package.json backend/
+COPY frontend/package.json frontend/
+
+RUN pnpm install --frozen-lockfile
+
+COPY shared/ shared/
+COPY backend/ backend/
+COPY frontend/ frontend/
+
+ENV NODE_ENV=production
+EXPOSE 5057
+
+# dev-режим (tsx watch) или прод: npm run start = tsx src/index.ts
+CMD ["pnpm", "--filter", "@recon/backend", "start"]

@@ -1,0 +1,62 @@
+# Reconciliation AI — локальный запуск с Ollama (или OpenRouter)
+#
+# Вариант A (рекомендуемый): у вас УЖЕ стоит Ollama на хосте.
+#   AI_PROVIDER=ollama docker compose up backend frontend
+#   В .env: OLLAMA_BASE_URL=http://host.docker.internal:11434
+#
+# Вариант B: всё в одном — Docker поднимет свой контейнер Ollama:
+#   docker compose --profile with-ollama up
+#   В .env: OLLAMA_BASE_URL=http://ollama:11434
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: recon-ollama
+    profiles: ["with-ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama   # модели сохраняются между перезапусками
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]   # GPU, если есть (NVIDIA); без него — CPU
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: recon-backend
+    ports:
+      - "5057:5057"
+    env_file:
+      - .env
+    environment:
+      # Внутри сети compose Ollama доступна по имени сервиса;
+      # для Ollama на хосте задайте в .env: OLLAMA_BASE_URL=http://host.docker.internal:11434
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # доступ к Ollama на хосте (Linux)
+    volumes:
+      - ./backend/src:/app/backend/src        # hot-reload при dev-режиме
+    depends_on: []
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: recon-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:5057
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ollama-data:

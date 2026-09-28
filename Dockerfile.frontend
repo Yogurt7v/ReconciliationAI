@@ -1,0 +1,20 @@
+# Frontend Reconciliation AI (Vite dev-сервер для локального использования)
+FROM node:20-bookworm-slim AS base
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY shared/package.json shared/
+COPY backend/package.json backend/
+COPY frontend/package.json frontend/
+
+RUN pnpm install --frozen-lockfile
+
+COPY shared/ shared/
+COPY frontend/ frontend/
+
+EXPOSE 5173
+
+CMD ["pnpm", "--filter", "@recon/frontend", "dev", "--", "--host", "0.0.0.0"]
