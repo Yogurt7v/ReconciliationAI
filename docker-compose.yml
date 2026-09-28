@@ -11,6 +11,28 @@
 #   Затем откройте http://localhost:5173
 
 services:
+  # --- САМОДОСТАТОЧНЫЙ ALL-IN-ONE (Вариант C) --------------------------------
+  # Один образ = Ollama + модель внутри + backend + frontend. Секретов нет.
+  #   docker compose --profile allinone up -d --build
+  #   Открыть http://localhost:5173
+  # Модель уже запечена — никаких ollama pull делать не нужно.
+  allinone:
+    build:
+      context: .
+      dockerfile: Dockerfile.allinone
+    container_name: recon-allinone
+    profiles: ["allinone"]
+    ports:
+      - "5173:5173"   # frontend (основной вход)
+      - "5057:5057"   # backend API напрямую (опционально)
+    restart: unless-stopped
+    # GPU на мощной машине — раскомментируйте (потребуется NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+
   ollama:
     image: ollama/ollama:latest
     container_name: recon-ollama

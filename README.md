@@ -151,3 +151,50 @@ backend автоматически переключится на fallback (`OLLA
 # В .env: AI_PROVIDER=ollama, OLLAMA_BASE_URL=http://host.docker.internal:11434
 docker compose up -d --build backend frontend
 ```
+
+### Вариант C — самодостаточный all-in-one образ (`Dockerfile.allinone`)
+
+Один Docker-образ содержит ВСЁ: Ollama + запечённую модель + backend + frontend.
+Секретов в образе нет (режим `REQUIRE_LOCAL_ONLY=true` не использует API-ключи),
+поэтому `.env` для запуска **не нужен** — достаточно Dockerfile и одной команды.
+Образ можно перенести на другую машину офлайн (`docker save` / `docker load`).
+
+```bash
+# 1. Сборка (нужны интернет и ~20 ГБ свободного диска; модель ~4.7 ГБ)
+docker build -f Dockerfile.allinone -t recon-ai:local .
+#   или через compose:
+docker compose --profile allinone up -d --build
+
+# 2. Запуск
+docker run -d -p 5173:5173 -p 5057:5057 --name recon-ai recon-ai:local
+
+# 3. Приложение доступно БЕЗ интернета и без ollama pull:
+open http://localhost:5173        # macOS
+xdg-open http://localhost:5173    # Linux
+```
+
+Перенос на более мощную машину (офлайн, без реестра):
+
+```bash
+# На сборочной машине:
+docker save recon-ai:local | gzip > recon-ai-local.tar.gz   # ~4-6 ГБ
+# Перенесите архив (scp/флешка) и на целевой машине:
+gunzip -c recon-ai-local.tar.gz | docker load
+docker run -d -p 5173:5173 --name recon-ai recon-ai:local
+```
+
+GPU на целевой машине (без пересборки образа):
+
+```bash
+# Требуется NVIDIA Driver + NVIDIA Container Toolkit на хосте:
+docker run -d --gpus=all -p 5173:5173 --name recon-ai recon-ai:local
+```
+
+Важно:
+- Архитектура CPU: образ собирается под архитектуру хоста (`linux/amd64` или `arm64`).
+  Для переноса между разными архитектурами используйте multi-arch сборку:
+  `docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.allinone -t user/recon-ai:local --push .`
+- Смена модели: отредактируйте `OLLAMA_MODEL` и строку `ollama pull` в `Dockerfile.allinone`,
+  пересоберите образ.
+- Логи процессов внутри контейнера: `docker exec recon-ai cat /var/log/backend.log`
+  (или `/var/log/ollama.log`, `/var/log/frontend.log`).
