@@ -103,3 +103,51 @@ reconciliation → analysis → done` (`failed`, `cancelled`).
 - Задания хранятся в памяти процесса (рестарт = потеря истории); БД не используется.
 - OCR требует установки tesseract-совместимой среды только через JS (tesseract.js),
   tessdata скачивается при первом использовании.
+
+## Запуск в Docker (локальная модель через Ollama)
+
+### Вариант B — всё в одном контейнере (профиль `with-ollama`)
+
+Docker сам поднимет контейнер Ollama; скачивать и устанавливать Ollama на хост не нужно.
+
+```bash
+# 1. Конфигурация
+cp .env.example .env
+#   В .env установите:
+#     AI_PROVIDER=ollama
+#     OLLAMA_BASE_URL=http://ollama:11434
+#     OLLAMA_MODEL=qwen2.5:7b-instruct
+
+# 2. Сборка и запуск всех сервисов (backend + frontend + ollama)
+docker compose --profile with-ollama up -d --build
+
+# 3. ОБЯЗАТЕЛЬНО: скачать модель внутрь контейнера (один раз, хранится в volume ollama-data)
+docker compose exec ollama ollama pull qwen2.5:7b-instruct
+
+# 4. Проверить, что Ollama видит модель
+docker compose exec ollama ollama list
+
+# 5. Открыть приложение
+open http://localhost:5173        # macOS
+xdg-open http://localhost:5173    # Linux
+```
+
+Полезные команды:
+
+```bash
+docker compose logs -f backend          # логи распознавания (видно выбор модели/fallback)
+docker compose down                     # остановить
+docker compose --profile with-ollama up -d   # запустить снова (модель останется в volume)
+docker volume rm recon_ollama-data      # удалить скачанные модели (если надо освободить место)
+```
+
+Требования к железу: ~5 ГБ RAM на модель 7B (CPU), ~6 ГБ VRAM при NVIDIA GPU.
+Без GPUcompose всё равно заработает на CPU, но медленнее. При недоступности выбранной модели
+backend автоматически переключится на fallback (`OLLAMA_FALLBACK_MODELS`).
+
+### Вариант A — Ollama уже стоит на хосте
+
+```bash
+# В .env: AI_PROVIDER=ollama, OLLAMA_BASE_URL=http://host.docker.internal:11434
+docker compose up -d --build backend frontend
+```

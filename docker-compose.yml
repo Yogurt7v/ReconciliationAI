@@ -5,8 +5,10 @@
 #   В .env: OLLAMA_BASE_URL=http://host.docker.internal:11434
 #
 # Вариант B: всё в одном — Docker поднимет свой контейнер Ollama:
-#   docker compose --profile with-ollama up
-#   В .env: OLLAMA_BASE_URL=http://ollama:11434
+#   cp .env.example .env  (проверьте: AI_PROVIDER=ollama, OLLAMA_BASE_URL=http://ollama:11434)
+#   docker compose --profile with-ollama up -d --build
+#   docker compose exec ollama ollama pull qwen2.5:7b-instruct   # ОБЯЗАТЕЛЬНО: скачайте модель
+#   Затем откройте http://localhost:5173
 
 services:
   ollama:
