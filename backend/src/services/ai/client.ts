@@ -21,9 +21,22 @@ const OPENROUTER_FALLBACK_MODELS = [
 ];
 
 // Fallback-модели для локального режима (Ollama) по умолчанию.
-// Смысл имеют только реально установленные модели — список можно
-// переопределить через OLLAMA_FALLBACK_MODELS через запятую.
-const DEFAULT_OLLAMA_FALLBACK_MODELS = ['qwen2.5:3b-instruct', 'llama3.2:3b'];
+// По REQUIRE_LOCAL_ONLY (см. ниже) fallback-цепочка ОТКЛЮЧЕНА: используется
+// только выбранная локальная модель, без автопереключений на другие модели.
+// Чтобы вернуть цепочку — задайте в .env: LOCAL_FALLBACK_ENABLED=true
+// и при желании свой список OLLAMA_FALLBACK_MODELS через запятую.
+const DEFAULT_OLLAMA_FALLBACK_MODELS: string[] = [];
+
+/**
+ * Требование пользователя: использовать ТОЛЬКО локальную модель Ollama.
+ * - все облачные вызовы (OpenRouter) отключены;
+ * - fallback на другие модели (облачные и локальные) отключен;
+ * - при недоступности локальной модели система деградирует к эвристикам,
+ *   а не обращается к другим распознавателям.
+ * Переопределяется в .env: REQUIRE_LOCAL_ONLY=false
+ */
+export const REQUIRE_LOCAL_ONLY =
+  (process.env.REQUIRE_LOCAL_ONLY ?? 'true').trim().toLowerCase() !== 'false';
 
 export type AiProvider = 'openrouter' | 'ollama';
 
@@ -70,8 +83,19 @@ function ollamaBaseUrlFromEnv(env: NodeJS.ProcessEnv): string {
 
 /** Fallback-цепочка для Ollama из env или по умолчанию */
 function ollamaFallbacksFromEnv(env: NodeJS.ProcessEnv): string[] {
+  // REQUIRE_LOCAL_ONLY (по умолчанию true) — локальная модель используется
+  // строго одна, без переключений на другие распознаватели.
+  if (isLocalOnly(env)) return [];
+  // Явное включение цепочки: LOCAL_FALLBACK_ENABLED=true
+  const enabled = env.LOCAL_FALLBACK_ENABLED?.trim().toLowerCase() === 'true';
+  if (!enabled) return [];
   const parsed = parseModelList(env.OLLAMA_FALLBACK_MODELS);
   return parsed.length > 0 ? parsed : DEFAULT_OLLAMA_FALLBACK_MODELS;
+}
+
+/** Флаг "только локально" с учётом env (для тестов можно передать свой env) */
+export function isLocalOnly(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.REQUIRE_LOCAL_ONLY ?? 'true').trim().toLowerCase() !== 'false';
 }
 
 /**
@@ -90,6 +114,24 @@ export function applyClientOverrides(
     model: clientModel || base.model,
     apiKey: overrides.apiKey?.trim() || base.apiKey,
   };
+
+  // РЕЖИМ "ТОЛЬКО ЛОКАЛЬНО" (REQUIRE_LOCAL_ONLY=true по умолчанию):
+  // любое клиентское переключение провайдеров запрещено. Всегда Ollama,
+  // всегда без fallback-цепочки. Если клиент прислал облачную модель ID —
+  // она игнорируется, остаётся локальная модель из env.
+  if (isLocalOnly(env)) {
+    return {
+      ...config,
+      provider: 'ollama',
+      baseUrl: ollamaBaseUrlFromEnv(env),
+      apiKey: 'ollama', // ключ не проверяется, но нужен формат Bearer
+      model:
+        clientModel && looksLikeOllamaModel(clientModel)
+          ? clientModel
+          : env.OLLAMA_MODEL?.trim() || base.model,
+      fallbackModels: [],
+    };
+  }
 
   if (!clientModel || clientModel === base.model) return config;
 
@@ -120,7 +162,10 @@ export function applyClientOverrides(
 
 /** Конфиг из окружения (читается в момент вызова — удобно для тестов) */
 export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig {
-  const provider: AiProvider = env.AI_PROVIDER?.trim().toLowerCase() === 'ollama' ? 'ollama' : 'openrouter';
+  // REQUIRE_LOCAL_ONLY=true по умолчанию: провайдер всегда ollama,
+  // облачные вызовы (OpenRouter) полностью отключены.
+  const provider: AiProvider =
+    isLocalOnly(env) || env.AI_PROVIDER?.trim().toLowerCase() === 'ollama' ? 'ollama' : 'openrouter';
 
   if (provider === 'ollama') {
     // Внутри docker-compose: http://ollama:11434. На хосте: http://localhost:11434
@@ -130,9 +175,7 @@ export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig 
       model: env.OLLAMA_MODEL?.trim() || 'qwen2.5:7b-instruct',
       baseUrl: `${host.replace(/\/$/, '')}/v1/chat/completions`,
       provider: 'ollama',
-      fallbackModels: parseModelList(env.OLLAMA_FALLBACK_MODELS).length > 0
-        ? parseModelList(env.OLLAMA_FALLBACK_MODELS)
-        : DEFAULT_OLLAMA_FALLBACK_MODELS,
+      fallbackModels: ollamaFallbacksFromEnv(env),
     };
   }
 
@@ -263,6 +306,15 @@ export async function requestJson<T>(
   userPayload: unknown,
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<{ data: T; debug: AiDebugInfo }> {
+  // ЖЁСТКИЙ БЛОКИРОР: REQUIRE_LOCAL_ONLY=true (по умолчанию) запрещает любые
+  // обращения к облачным распознавателям. Даже если конфигурация по какой-то
+  // причине получилась openrouter — запрос не будет отправлен.
+  if (REQUIRE_LOCAL_ONLY && config.provider !== 'ollama') {
+    throw new AiUnavailableError(
+      'Облачные модели отключены (REQUIRE_LOCAL_ONLY=true). Разрешено использовать только локальную модель Ollama.',
+    );
+  }
+
   if (!config.apiKey) {
     throw new AiUnavailableError('OPENROUTER_API_KEY не задан');
   }
@@ -272,7 +324,8 @@ export async function requestJson<T>(
     { role: 'user', content: JSON.stringify(userPayload) },
   ];
 
-  // Список моделей для попытки: основная + fallback (без дубликатов)
+  // Список моделей для попытки: основная + fallback (без дубликатов).
+  // В режиме "только локально" fallbackModels всегда пуст => ровно одна модель.
   const modelsToTry = [config.model, ...config.fallbackModels.filter((m) => m !== config.model)];
   let fallbackUsed = false;
 

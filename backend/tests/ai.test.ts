@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { AiUnavailableError, requestJson, type AiConfig } from '../src/services/ai/client.js';
+import { AiUnavailableError, requestJson, aiConfigFromEnv, applyClientOverrides, type AiConfig } from '../src/services/ai/client.js';
 import { assistStructure } from '../src/services/ai/structureAssist.js';
 import { aiHypotheses, ruleBasedHypotheses } from '../src/services/ai/hypotheses.js';
 import type { Grid, HypothesisContext } from '@recon/shared';
@@ -265,5 +265,50 @@ describe('aiHypotheses', () => {
   it('без ключа возвращает null', async () => {
     const out = await aiHypotheses(baseConfig({ apiKey: null }), ctxWith({}));
     expect(out).toBeNull();
+  });
+});
+
+/* ------- Режим "только локальная модель" (REQUIRE_LOCAL_ONLY) ------- */
+
+describe('REQUIRE_LOCAL_ONLY — отключение других распознавателей', () => {
+  const localEnv = { REQUIRE_LOCAL_ONLY: 'true', OLLAMA_MODEL: 'qwen2.5:7b-instruct', OLLAMA_BASE_URL: 'http://ollama:11434' };
+
+  it('aiConfigFromEnv всегда возвращает ollama, даже при AI_PROVIDER=openrouter', () => {
+    const cfg = aiConfigFromEnv({ ...localEnv, AI_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'sk-test' });
+    expect(cfg.provider).toBe('ollama');
+    expect(cfg.baseUrl).toContain('ollama:11434');
+    expect(cfg.fallbackModels).toEqual([]);
+  });
+
+  it('applyClientOverrides игнорирует облачную модель клиента и не даёт fallback', () => {
+    const base = aiConfigFromEnv(localEnv);
+    const cfg = applyClientOverrides(base, { model: 'openai/gpt-4o-mini', apiKey: 'sk-x' }, localEnv);
+    expect(cfg.provider).toBe('ollama');
+    expect(cfg.model).toBe('qwen2.5:7b-instruct'); // клиентская облачная модель отброшена
+    expect(cfg.fallbackModels).toEqual([]);
+  });
+
+  it('applyClientOverrides принимает локальную модель клиента', () => {
+    const base = aiConfigFromEnv(localEnv);
+    const cfg = applyClientOverrides(base, { model: 'llama3.1:8b' }, localEnv);
+    expect(cfg.model).toBe('llama3.1:8b');
+    expect(cfg.fallbackModels).toEqual([]);
+  });
+
+  it('requestJson блокирует облачный конфиг без единого HTTP-запроса', async () => {
+    const cloudCfg: AiConfig = {
+      apiKey: 'sk-test',
+      model: 'openai/gpt-4o-mini',
+      baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      provider: 'openrouter',
+      fallbackModels: [],
+    };
+    await expect(requestJson(cloudCfg, 'sys', {})).rejects.toThrow(/только локальную модель/i);
+  });
+
+  it('при REQUIRE_LOCAL_ONLY=false поведение возвращается к прежнему (env-конфиг openrouter)', () => {
+    const cfg = aiConfigFromEnv({ REQUIRE_LOCAL_ONLY: 'false', OPENROUTER_API_KEY: 'sk-test' });
+    expect(cfg.provider).toBe('openrouter');
+    expect(cfg.fallbackModels.length).toBeGreaterThan(0);
   });
 });
