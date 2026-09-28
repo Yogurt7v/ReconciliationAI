@@ -9,8 +9,15 @@
 # СЕКРЕТОВ В ОБРАЗЕ НЕТ: режим REQUIRE_LOCAL_ONLY=true не использует никаких
 # API-ключей. Всё поведение настраивается обычными ENV при запуске.
 #
+# СБОРКА ТРЕБУЕТ ИНТЕРНЕТ (apt, pnpm, ollama pull). Целевая машина — нет:
+# она получает уже готовый образ через docker load. Не путайте стороны.
+#
 # Сборка (на машине с интернетом и достаточным диском ~20 ГБ):
 #   docker build -f Dockerfile.allinone -t recon-ai:local .
+#
+# ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА после сборки — модель должна быть внутри образа:
+#   docker run --rm recon-ai:local ollama list
+# Если модели нет, пересоберите образ: сборка специально падает на этом шаге.
 #
 # Экспорт для переноса на другую машину (без реестра):
 #   docker save recon-ai:local | gzip > recon-ai-local.tar.gz
@@ -58,7 +65,6 @@ COPY frontend/ frontend/
 ENV NODE_ENV=production \
     AI_PROVIDER=ollama \
     REQUIRE_LOCAL_ONLY=true \
-    LOCAL_FALLBACK_ENABLED=false \
     OLLAMA_BASE_URL=http://127.0.0.1:11434 \
     OLLAMA_MODEL=qwen2.5:7b-instruct \
     PORT=5057 \
@@ -69,12 +75,38 @@ ENV NODE_ENV=production \
 # образа. Контейнер запускается на любой машине БЕЗ интернета и БЕЗ шага
 # `ollama pull`. Размер слоя ≈ размер модели (~4.7 ГБ для qwen2.5:7b-instruct).
 #
-# Меняете модель? Поменяйте OLLAMA_MODEL выше И строку pull ниже, затем
-# пересоберите образ.
-RUN ollama serve & \
-    sleep 5 && \
-    ollama pull qwen2.5:7b-instruct && \
-    pkill -f "ollama serve" || true
+# ВАЖНО: ошибка `ollama pull` ОБЯЗАНА ломать сборку. Раньше цепочка
+# заканчивалась на `|| true` — из-за приоритета `&&` этот `true` перехватывал
+# ошибку pull, и Docker рапортовал об успешной сборке образа БЕЗ модели.
+# На офлайн-машине это выглядело бы как «всё работает, но AI отключился».
+# Теперь падение честно останавливает сборку, а `|| true` стоит только
+# у pkill, которому он и нужен (процесс мог завершиться сам).
+#
+# Меняете модель? Достаточно поменять OLLAMA_MODEL выше — он используется
+# и для pull, и для проверки. Дублировать имя модели вручную не нужно.
+RUN set -eu; \
+    MODEL="${OLLAMA_MODEL:?OLLAMA_MODEL не задан}"; \
+    ollama serve & \
+    OLLAMA_PID=$!; \
+    READY=0; \
+    for i in $(seq 1 60); do \
+        if ollama list >/dev/null 2>&1; then READY=1; break; fi; \
+        sleep 1; \
+    done; \
+    if [ "$READY" -ne 1 ]; then \
+        echo "ОШИБКА: Ollama не ответил за 60 с — прерываю сборку" >&2; \
+        kill "$OLLAMA_PID" 2>/dev/null || true; \
+        exit 1; \
+    fi; \
+    echo "Ollama готов, загружаю ${MODEL}"; \
+    ollama pull "$MODEL"; \
+    ollama list | grep -q "${MODEL%%:*}" || { \
+        echo "ОШИБКА: модель ${MODEL} отсутствует после pull — прерываю сборку" >&2; \
+        kill "$OLLAMA_PID" 2>/dev/null || true; \
+        exit 1; \
+    }; \
+    echo "Модель ${MODEL} запечена в образ"; \
+    kill "$OLLAMA_PID" 2>/dev/null || true
 
 COPY supervisord.conf /etc/supervisor/conf.d/recon.conf
 
