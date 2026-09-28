@@ -115,10 +115,11 @@ describe('applyMapping', () => {
     ];
     const result = applyMapping(src(grid), mapping(), 'ours');
     expect(result.rows).toHaveLength(2);
-    expect(result.rows[0].docNumber).toBe('1');
-    expect(result.rows[0].docDate).toBe('2026-03-05');
-    expect(result.rows[0].amount).toBe('15000.00');
-    expect(result.rows[1].docNumber).toBe('2');
+    const [first, second] = result.rows;
+    expect(first!.docNumber).toBe('1');
+    expect(first!.docDate).toBe('2026-03-05');
+    expect(first!.amount).toBe('15000.00');
+    expect(second!.docNumber).toBe('2');
     expect(result.meta.rowsSkipped).toBeGreaterThanOrEqual(3);
     expect(result.openingBalance).toBe('5000.00');
     expect(result.closingBalance).toBe('24200.50');
@@ -150,8 +151,9 @@ describe('applyMapping', () => {
     };
     const result = applyMapping(src(grid), m, 'ours');
     expect(result.rows).toHaveLength(2);
-    expect(result.rows[0].amount).toBe('15000.00');
-    expect(result.rows[1].amount).toBe('4200.00');
+    const [first, second] = result.rows;
+    expect(first!.amount).toBe('15000.00');
+    expect(second!.amount).toBe('4200.00');
     expect(result.assumptions.length).toBeGreaterThan(0);
   });
 });

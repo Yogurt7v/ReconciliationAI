@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { useModelSetting } from './hooks/useModelSetting';
+import { useAiRuntime } from './hooks/useAiRuntime';
 import { SettingsButton } from './components/SettingsButton';
 import { ModelModal } from './components/ModelModal';
 import MainScreen from './screens/MainScreen';
@@ -8,6 +9,7 @@ import MainScreen from './screens/MainScreen';
 export default function App() {
   const [model, setModel, apiKey, setApiKey] = useModelSetting();
   const [modalOpen, setModalOpen] = useState(false);
+  const ai = useAiRuntime();
 
   const handleSaveSettings = (newModel: string, newApiKey: string) => {
     setModel(newModel);
@@ -21,10 +23,11 @@ export default function App() {
         open={modalOpen}
         model={model}
         apiKey={apiKey}
+        runtime={ai}
         onClose={() => setModalOpen(false)}
         onSave={handleSaveSettings}
       />
-      <MainScreen model={model} apiKey={apiKey} />
+      <MainScreen model={model} apiKey={apiKey} runtime={ai} />
     </main>
   );
 }

@@ -8,13 +8,13 @@
 #   cp .env.example .env  (проверьте: AI_PROVIDER=ollama, OLLAMA_BASE_URL=http://ollama:11434)
 #   docker compose --profile with-ollama up -d --build
 #   docker compose exec ollama ollama pull qwen2.5:7b-instruct   # ОБЯЗАТЕЛЬНО: скачайте модель
-#   Затем откройте http://localhost:5173
+#   Затем откройте http://localhost:3000
 
 services:
   # --- САМОДОСТАТОЧНЫЙ ALL-IN-ONE (Вариант C) --------------------------------
   # Один образ = Ollama + модель внутри + backend + frontend. Секретов нет.
   #   docker compose --profile allinone up -d --build
-  #   Открыть http://localhost:5173
+  #   Открыть http://localhost:3000
   # Модель уже запечена — никаких ollama pull делать не нужно.
   allinone:
     build:
@@ -23,7 +23,7 @@ services:
     container_name: recon-allinone
     profiles: ["allinone"]
     ports:
-      - "5173:5173"   # frontend (основной вход)
+      - "3000:3000"   # frontend (основной вход)
       - "5057:5057"   # backend API напрямую (опционально)
     restart: unless-stopped
     # GPU на мощной машине — раскомментируйте (потребуется NVIDIA Container Toolkit):
@@ -62,11 +62,9 @@ services:
       # для Ollama на хосте задайте в .env: OLLAMA_BASE_URL=http://host.docker.internal:11434
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      REQUIRE_LOCAL_ONLY: ${REQUIRE_LOCAL_ONLY:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"   # доступ к Ollama на хосте (Linux)
-    volumes:
-      - ./backend/src:/app/backend/src        # hot-reload при dev-режиме
-    depends_on: []
     restart: unless-stopped
 
   frontend:
@@ -75,9 +73,11 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: recon-frontend
     ports:
-      - "5173:5173"
+      - "3000:3000"
     environment:
-      VITE_API_URL: http://localhost:5057
+      # Vite-прокси /api -> BACKEND_URL. Без этого переменная берётся
+      # localhost:5057 ВНУТРИ контейнера фронтенда, где никто не слушает.
+      BACKEND_URL: http://backend:5057
     depends_on:
       - backend
     restart: unless-stopped

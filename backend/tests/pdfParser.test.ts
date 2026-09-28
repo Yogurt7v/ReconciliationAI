@@ -12,7 +12,13 @@ import { describe, expect, it } from 'vitest';
 import { parsePdf } from '../src/parsers/pdfParser.js';
 import type { Grid } from '@recon/shared';
 
-function makePdf(draw: (doc: import('pdfkit').PDFDocument) => void): Promise<Buffer> {
+/**
+ * @types/pdfkit объявляет `export = doc`, где doc — экземпляр PDFKit.PDFDocument,
+ * поэтому тип документа доступен только через InstanceType.
+ */
+type PdfDocument = InstanceType<typeof import('pdfkit')>;
+
+function makePdf(draw: (doc: PdfDocument) => void): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const PDFDocument = require('pdfkit') as typeof import('pdfkit');
     const doc = new PDFDocument({ size: 'A4', margin: 0 });
@@ -26,7 +32,7 @@ function makePdf(draw: (doc: import('pdfkit').PDFDocument) => void): Promise<Buf
 }
 
 /** Таблица в фиксированных колонках: текст кладётся по абсолютным координатам */
-function drawTable(doc: import('pdfkit').PDFDocument, rows: string[][], top = 60): void {
+function drawTable(doc: PdfDocument, rows: string[][], top = 60): void {
   const cols = [40, 150, 260, 380];
   rows.forEach((row, ri) => {
     row.forEach((text, ci) => {

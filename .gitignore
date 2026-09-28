@@ -1,9 +1,16 @@
 node_modules/
 .pnpm-store/
 dist/
+*.tsbuildinfo
 .env
 uploads/
 reports/
 .tessdata/
+**/samples/*.xlsx
+**/samples/*.pdf
+**/samples/out/
 *.log
 .DS_Store
+AGENTS.md
+test/*
+.opencode

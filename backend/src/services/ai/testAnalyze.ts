@@ -11,6 +11,7 @@ import type { Grid } from '@recon/shared';
 import { cellToString } from '@recon/shared';
 
 import { type AiConfig, type AiDebugInfo, AiUnavailableError, requestJson } from './client.js';
+import { selfConsistencyCheck, validateDate } from '../validationRules.js';
 
 /* -------------------------------- Типы ----------------------------------- */
 
@@ -41,6 +42,8 @@ export interface DocumentData {
 
 export interface TestAnalyzeResult {
   result: DocumentData;
+  /** Проблемы согласованности данных (сальдо/обороты, отфильтрованные операции) */
+  warnings: string[];
   debug: AiDebugInfo;
 }
 
@@ -197,7 +200,15 @@ function parseTransactions(raw: AiTransaction[] | undefined): Transaction[] {
 
 /* ----------------------------- Валидация --------------------------------- */
 
-function validateAndBuild(raw: AiDocumentResponse): DocumentData {
+/** Операция считается «битой», если у неё нет ни даты, ни сумм */
+function isBrokenTransaction(t: Transaction): boolean {
+  const dateOk = validateDate(t.date).isValid;
+  const hasAmount = (t.debit !== null && Math.abs(t.debit) > 0) || (t.credit !== null && Math.abs(t.credit) > 0);
+  return !dateOk && !hasAmount;
+}
+
+function buildAndValidate(raw: AiDocumentResponse): { document: DocumentData; warnings: string[] } {
+  const warnings: string[] = [];
   const openingBalance = parseNumber(raw.openingBalance);
   const closingBalance = parseNumber(raw.closingBalance);
   const turnoverDebit = parseNumberOrNull(raw.turnoverDebit);
@@ -207,18 +218,32 @@ function validateAndBuild(raw: AiDocumentResponse): DocumentData {
     ? raw.contracts
         .filter((c): c is AiContract => typeof c === 'object' && c !== null)
         .slice(0, 100)
-        .map((c) => ({
-          name: typeof c.name === 'string' ? c.name : 'Без названия',
-          openingBalance: parseNumber(c.openingBalance),
-          closingBalance: parseNumber(c.closingBalance),
-          turnoverDebit: parseNumberOrNull(c.turnoverDebit),
-          turnoverCredit: parseNumberOrNull(c.turnoverCredit),
-          transactions: parseTransactions(c.transactions),
-        }))
+        .map((c) => {
+          const transactions = parseTransactions(c.transactions);
+          const broken = transactions.filter(isBrokenTransaction);
+          if (broken.length > 0) {
+            warnings.push(
+              `Договор «${c.name ?? 'Без названия'}»: отброшено ${broken.length} операции(й) без даты и сумм.`,
+            );
+          }
+          return {
+            name: typeof c.name === 'string' ? c.name : 'Без названия',
+            openingBalance: parseNumber(c.openingBalance),
+            closingBalance: parseNumber(c.closingBalance),
+            turnoverDebit: parseNumberOrNull(c.turnoverDebit),
+            turnoverCredit: parseNumberOrNull(c.turnoverCredit),
+            transactions: transactions.filter((t) => !isBrokenTransaction(t)),
+          };
+        })
     : [];
 
   // Если contracts пустой, но есть transactions на верхнем уровне — простой формат
   if (contracts.length === 0 && Array.isArray(raw.transactions) && raw.transactions.length > 0) {
+    const transactions = parseTransactions(raw.transactions);
+    const broken = transactions.filter(isBrokenTransaction);
+    if (broken.length > 0) {
+      warnings.push(`Отброшено ${broken.length} операции(й) без даты и сумм.`);
+    }
     contracts = [
       {
         name: 'Основной',
@@ -226,7 +251,7 @@ function validateAndBuild(raw: AiDocumentResponse): DocumentData {
         closingBalance,
         turnoverDebit,
         turnoverCredit,
-        transactions: parseTransactions(raw.transactions),
+        transactions: transactions.filter((t) => !isBrokenTransaction(t)),
       },
     ];
   }
@@ -236,7 +261,7 @@ function validateAndBuild(raw: AiDocumentResponse): DocumentData {
     totalRows += c.transactions.length;
   }
 
-  return {
+  const document: DocumentData = {
     totalRows,
     openingBalance,
     closingBalance,
@@ -244,6 +269,23 @@ function validateAndBuild(raw: AiDocumentResponse): DocumentData {
     turnoverCredit,
     contracts,
   };
+
+  // Self-consistency: сальдо/обороты по документам и по договорам должны сходиться
+  for (const check of selfConsistencyCheck({
+    openingBalance,
+    closingBalance,
+    turnoverDebit,
+    turnoverCredit,
+    contracts,
+  })) {
+    if (!check.passed) {
+      warnings.push(
+        `${check.check}: расхождение ${(check.diff ?? 0).toFixed(2)} ₽.`,
+      );
+    }
+  }
+
+  return { document, warnings };
 }
 
 /* -------------------------------- API ------------------------------------ */
@@ -273,6 +315,6 @@ export async function testAnalyze(grid: Grid, config: AiConfig): Promise<TestAna
     },
   );
 
-  const result = validateAndBuild(raw);
-  return { result, debug };
+  const { document, warnings } = buildAndValidate(raw);
+  return { result: document, warnings, debug };
 }

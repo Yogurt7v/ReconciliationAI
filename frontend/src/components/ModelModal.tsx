@@ -1,38 +1,51 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { AI_MODELS, DEFAULT_MODEL, API_KEY_STORAGE_KEY, LOCAL_MODEL_PRESETS } from '../config';
+import type { AiRuntimeInfo } from '../api';
 import { XIcon } from './icons';
 
 interface Props {
   open: boolean;
   model: string;
   apiKey: string;
+  /** Фактическая конфигурация backend (null, если недоступна) */
+  runtime?: AiRuntimeInfo | null;
   onClose: () => void;
   onSave: (model: string, apiKey: string) => void;
 }
 
-export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
+export function ModelModal({ open, model, apiKey, runtime, onClose, onSave }: Props) {
   const [selected, setSelected] = useState(model);
   const [customValue, setCustomValue] = useState('');
   const [isCustom, setIsCustom] = useState(false);
   const [apiKeyValue, setApiKeyValue] = useState(apiKey);
   const overlayRef = useRef<HTMLDivElement>(null);
 
+  // REQUIRE_LOCAL_ONLY: облачные модели и ключ OpenRouter не применяются.
+  const localOnly = runtime?.localOnly === true;
+  const cloudModels = AI_MODELS.filter((m) => m.provider !== 'local');
+  const localModels = AI_MODELS.filter((m) => m.provider === 'local');
+  // Если модель из localStorage не применима, показываем реальную.
+  const effectiveModel = localOnly ? (runtime?.model ?? model) : model;
+
   useEffect(() => {
-    if (open) {
-      const isPreset = AI_MODELS.some((m) => m.id === model);
-      if (isPreset) {
-        setSelected(model);
-        setIsCustom(false);
-        setCustomValue('');
-      } else {
-        setSelected('');
-        setIsCustom(true);
-        setCustomValue(model === DEFAULT_MODEL ? '' : model);
-      }
-      setApiKeyValue(apiKey || '');
+    if (!open) return;
+    // В локальном режиме инициализируемся реально применяемой моделью, а не
+    // сохранённой: облачный ID из localStorage здесь всё равно был бы отброшен,
+    // но остался бы «выбранным» и снова записался бы при сохранении.
+    const target = effectiveModel;
+    const isPreset = AI_MODELS.some((m) => m.id === target);
+    if (isPreset) {
+      setSelected(target);
+      setIsCustom(false);
+      setCustomValue('');
+    } else {
+      setSelected('');
+      setIsCustom(true);
+      setCustomValue(target === DEFAULT_MODEL ? '' : target);
     }
-  }, [open, model, apiKey]);
+    setApiKeyValue(apiKey || '');
+  }, [open, effectiveModel, apiKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -46,11 +59,14 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
   if (!open) return null;
 
   const handleSave = () => {
+    // В локальном режиме запасной вариант — реальная модель backend'а,
+    // а не облачный DEFAULT_MODEL (который всё равно был бы отброшен).
+    const fallback = localOnly ? (runtime?.model ?? DEFAULT_MODEL) : DEFAULT_MODEL;
     let finalModel: string;
     if (isCustom) {
-      finalModel = customValue.trim() || DEFAULT_MODEL;
+      finalModel = customValue.trim() || fallback;
     } else {
-      finalModel = selected || DEFAULT_MODEL;
+      finalModel = selected || fallback;
     }
     onSave(finalModel, apiKeyValue.trim());
     onClose();
@@ -71,32 +87,44 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
         </div>
 
         <div className="modal-body">
+          {/* Статус фактической конфигурации — снимает путаницу, когда выбранная
+              модель отличается от применяемой backend'ом. */}
+          {runtime && (
+            <div className="modal-hint" role="status">
+              {localOnly ? 'Режим «только локально»: облачные модели и ключ OpenRouter не используются. ' : ''}
+              Фактически применяется: <code>{runtime.model}</code>
+              {runtime.provider === 'ollama' ? ' (Ollama)' : ' (OpenRouter)'}.
+            </div>
+          )}
+
           {/* API Key Section */}
-          <div className="modal-api-key-section">
-            <label className="modal-label">
-              OpenRouter API Key
-              <input
-                className="modal-api-key-input"
-                type="password"
-                placeholder="sk-or-..."
-                value={apiKeyValue}
-                onChange={(e) => setApiKeyValue(e.target.value)}
-              />
-            </label>
-            <p className="modal-hint">
-              Ключ сохраняется локально в браузере. Получите на{' '}
-              <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">
-                openrouter.ai/keys
-              </a>
-              . Не требуется для локальных моделей (Ollama).
-            </p>
-          </div>
+          {!localOnly && (
+            <div className="modal-api-key-section">
+              <label className="modal-label">
+                OpenRouter API Key
+                <input
+                  className="modal-api-key-input"
+                  type="password"
+                  placeholder="sk-or-..."
+                  value={apiKeyValue}
+                  onChange={(e) => setApiKeyValue(e.target.value)}
+                />
+              </label>
+              <p className="modal-hint">
+                Ключ сохраняется локально в браузере. Получите на{' '}
+                <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">
+                  openrouter.ai/keys
+                </a>
+                . Не требуется для локальных моделей (Ollama).
+              </p>
+            </div>
+          )}
 
           {/* Model Selection: grouped by provider */}
-          {AI_MODELS.some((m) => m.provider !== 'local') && (
+          {!localOnly && cloudModels.length > 0 && (
             <div className="modal-model-list">
               <p className="modal-label">Облачные модели (OpenRouter):</p>
-              {AI_MODELS.filter((m) => m.provider !== 'local').map((m) => (
+              {cloudModels.map((m) => (
                 <label key={m.id} className="modal-model-option">
                   <input
                     type="radio"
@@ -114,10 +142,10 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
             </div>
           )}
 
-          {AI_MODELS.some((m) => m.provider === 'local') && (
+          {localModels.length > 0 && (
             <div className="modal-model-list">
               <p className="modal-label">Локальные модели (Ollama):</p>
-              {AI_MODELS.filter((m) => m.provider === 'local').map((m) => (
+              {localModels.map((m) => (
                 <label key={m.id} className="modal-model-option">
                   <input
                     type="radio"
@@ -148,7 +176,9 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
               />
               <span className="modal-model-info">
                 <span className="modal-model-name">Своя модель</span>
-                <span className="modal-model-id">ID из OpenRouter или имя модели Ollama</span>
+                <span className="modal-model-id">
+                  {localOnly ? 'Имя модели Ollama (например qwen2.5:7b-instruct)' : 'ID из OpenRouter или имя модели Ollama'}
+                </span>
               </span>
             </label>
             {isCustom && (
@@ -156,7 +186,7 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
                 className="modal-custom-input"
                 type="text"
                 list="model-presets"
-                placeholder="openai/gpt-4o или qwen2.5:7b-instruct"
+                placeholder={localOnly ? 'qwen2.5:7b-instruct' : 'openai/gpt-4o или qwen2.5:7b-instruct'}
                 value={customValue}
                 onChange={(e) => setCustomValue(e.target.value)}
                 autoFocus

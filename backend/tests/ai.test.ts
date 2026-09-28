@@ -1,19 +1,45 @@
 /**
- * Тесты AI-сервиса: клиент OpenRouter (retry/таймаут/JSON), ассистент
- * структуры со слиянием эвристик и деградацией, гипотезы.
+ * Тесты AI-сервиса: клиент OpenRouter/Ollama (retry/бюджет попыток/таймаут/JSON),
+ * ассистент структуры со слиянием эвристик и деградацией, гипотезы,
+ * режим «только локальная модель» (REQUIRE_LOCAL_ONLY).
  * Сеть не используется — global.fetch подменяется заглушками.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AiUnavailableError, requestJson, aiConfigFromEnv, applyClientOverrides, type AiConfig } from '../src/services/ai/client.js';
+import {
+  AiUnavailableError,
+  requestJson,
+  aiConfigFromEnv,
+  applyClientOverrides,
+  isLocalOnly,
+  looksLikeOllamaModel,
+  type AiConfig,
+} from '../src/services/ai/client.js';
 import { assistStructure } from '../src/services/ai/structureAssist.js';
-import { aiHypotheses, ruleBasedHypotheses } from '../src/services/ai/hypotheses.js';
-import type { Grid, HypothesisContext } from '@recon/shared';
+import {
+  aiHypotheses,
+  ruleBasedHypotheses,
+  type HypothesisContext,
+} from '../src/services/ai/hypotheses.js';
+import type { Grid } from '@recon/shared';
+
+/** Переменные окружения, которые тесты выставляют и обязаны убрать */
+const MANAGED_ENV_KEYS = [
+  'OPENROUTER_API_KEY',
+  'OPENROUTER_MODEL',
+  'AI_FALLBACK_MODELS',
+  'AI_PROVIDER',
+  'OLLAMA_MODEL',
+  'OLLAMA_BASE_URL',
+  'OLLAMA_API_KEY',
+  'OLLAMA_FALLBACK_MODELS',
+  'REQUIRE_LOCAL_ONLY',
+] as const;
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENROUTER_API_KEY;
+  for (const key of MANAGED_ENV_KEYS) delete process.env[key];
 });
 
 /** Минимальная конфигурация для тестов клиента (OpenAI-совместимый endpoint) */
@@ -30,6 +56,12 @@ const baseConfig = (overrides: Partial<AiConfig> = {}): AiConfig => ({
 /* -------------------------------- Клиент ---------------------------------- */
 
 describe('requestJson', () => {
+  // По умолчанию REQUIRE_LOCAL_ONLY=true — облачные вызовы заблокированы.
+  // Тесты облачного режима явно его отключают.
+  beforeEach(() => {
+    process.env.REQUIRE_LOCAL_ONLY = 'false';
+  });
+
   it('без ключа сразу бросает AiUnavailableError', async () => {
     await expect(
       requestJson(baseConfig({ apiKey: null }), 'sys', {}),
@@ -70,7 +102,55 @@ describe('requestJson', () => {
     await expect(requestJson(baseConfig(), 'sys', {})).rejects.toBeInstanceOf(
       AiUnavailableError,
     );
+    // 400 — невременная ошибка: смена модели не поможет, один запрос
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('бюджет попыток: основная модель 2 раза, каждая fallback — 1 (сеть недоступна)', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Основная 'm' + 2 fallback-модели, все не отвечают
+    const err = await requestJson(
+      baseConfig({ fallbackModels: ['fb-one', 'fb-two'] }),
+      'sys',
+      {},
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(AiUnavailableError);
+    expect(fetchMock).toHaveBeenCalledTimes(4); // 2 + 1 + 1
+    expect((err as AiUnavailableError).debug?.attempts).toBe(4);
+  });
+
+  it('использует fallback-модель при сбое основной и помечает fallbackUsed', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":1}' } }] }), { status: 200 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await requestJson<{ ok: number }>(
+      baseConfig({ fallbackModels: ['fb-one', 'fb-two'] }),
+      'sys',
+      {},
+    );
+    expect(out.data).toEqual({ ok: 1 });
+    expect(out.debug.fallbackUsed).toBe(true);
+    expect(out.debug.attempts).toBe(3); // m×2 → fb-one×1
+    const models = fetchMock.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(models[0]!.model).toBe('m');
+    expect(models[2]!.model).toBe('fb-one');
+  });
+
+  it('пустая цепочка fallback отключает переключение моделей', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await requestJson(baseConfig({ fallbackModels: [] }), 'sys', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(AiUnavailableError);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // только основная, с одним повтором
   });
 
   it('бросает ошибку на невалидном JSON в ответе модели', async () => {
@@ -101,7 +181,14 @@ const SAMPLE_GRID: Grid = [
 ];
 
 describe('assistStructure', () => {
-  it('без ключа — деградация к эвристике с пометкой в reasoning', async () => {
+  // assistStructure() сам вызывает aiConfigFromEnv(), поэтому режим должен быть облачным.
+  beforeEach(() => {
+    process.env.REQUIRE_LOCAL_ONLY = 'false';
+  });
+
+  it('облачный режим без ключа — деградация к эвристике с пометкой в reasoning', async () => {
+    // fetch не подменён: если бы запрос ушёл, он упал бы с сетевой ошибкой,
+    // но конфиг без ключа отсекается ещё до вызова.
     const { mapping, aiUsed } = await assistStructure(SAMPLE_GRID);
     expect(aiUsed).toBe(false);
     expect(mapping.source).toBe('heuristic');
@@ -110,6 +197,20 @@ describe('assistStructure', () => {
     expect(mapping.columns.docNumber).toBe(0);
     expect(mapping.columns.docDate).toBe(1);
     expect(mapping.columns.amount).toBe(2);
+  });
+
+  it('локальный режим без Ollama — деградация к эвристике', async () => {
+    // REQUIRE_LOCAL_ONLY=true: apiKey всегда 'ollama', поэтому ветка «нет ключа»
+    // недостижима и деградация происходит по недоступности провайдера.
+    process.env.REQUIRE_LOCAL_ONLY = 'true';
+    process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:1';
+    const fetchMock = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { mapping, aiUsed } = await assistStructure(SAMPLE_GRID);
+    expect(aiUsed).toBe(false);
+    expect(mapping.source).toBe('heuristic');
+    expect(mapping.columns.docNumber).toBe(0);
   });
 
   it('сливает ответ модели с эвристикой (source=ai+heuristic)', async () => {
@@ -225,6 +326,10 @@ describe('ruleBasedHypotheses', () => {
 });
 
 describe('aiHypotheses', () => {
+  beforeEach(() => {
+    process.env.REQUIRE_LOCAL_ONLY = 'false';
+  });
+
   it('валидирует и нормализует ответ модели', async () => {
     vi.stubGlobal(
       'fetch',
@@ -270,9 +375,14 @@ describe('aiHypotheses', () => {
 
 /* ------- Режим "только локальная модель" (REQUIRE_LOCAL_ONLY) ------- */
 
-describe('REQUIRE_LOCAL_ONLY — отключение других распознавателей', () => {
-  const localEnv = { REQUIRE_LOCAL_ONLY: 'true', OLLAMA_MODEL: 'qwen2.5:7b-instruct', OLLAMA_BASE_URL: 'http://ollama:11434' };
+/** Типичное окружение локального режима */
+const localEnv = {
+  REQUIRE_LOCAL_ONLY: 'true',
+  OLLAMA_MODEL: 'qwen2.5:7b-instruct',
+  OLLAMA_BASE_URL: 'http://ollama:11434',
+};
 
+describe('REQUIRE_LOCAL_ONLY — отключение других распознавателей', () => {
   it('aiConfigFromEnv всегда возвращает ollama, даже при AI_PROVIDER=openrouter', () => {
     const cfg = aiConfigFromEnv({ ...localEnv, AI_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'sk-test' });
     expect(cfg.provider).toBe('ollama');
@@ -296,6 +406,8 @@ describe('REQUIRE_LOCAL_ONLY — отключение других распоз�
   });
 
   it('requestJson блокирует облачный конфиг без единого HTTP-запроса', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     const cloudCfg: AiConfig = {
       apiKey: 'sk-test',
       model: 'openai/gpt-4o-mini',
@@ -304,11 +416,87 @@ describe('REQUIRE_LOCAL_ONLY — отключение других распоз�
       fallbackModels: [],
     };
     await expect(requestJson(cloudCfg, 'sys', {})).rejects.toThrow(/только локальную модель/i);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('при REQUIRE_LOCAL_ONLY=false поведение возвращается к прежнему (env-конфиг openrouter)', () => {
     const cfg = aiConfigFromEnv({ REQUIRE_LOCAL_ONLY: 'false', OPENROUTER_API_KEY: 'sk-test' });
     expect(cfg.provider).toBe('openrouter');
     expect(cfg.fallbackModels.length).toBeGreaterThan(0);
+  });
+
+  it('локальный режим игнорирует OLLAMA_FALLBACK_MODELS', () => {
+    const cfg = aiConfigFromEnv({ ...localEnv, OLLAMA_FALLBACK_MODELS: 'a:1,b:2' });
+    expect(cfg.fallbackModels).toEqual([]);
+  });
+
+  it('isLocalOnly определяет флаг /api/health, а не наличие fallback', () => {
+    // Регресс: флаг health вычислялся как provider==='ollama' && fallback пуст,
+    // из-за чего при REQUIRE_LOCAL_ONLY=false + AI_PROVIDER=ollama фронтенд
+    // ошибочно скрывал ключ OpenRouter и запрещал облачные модели.
+    const cloudOllama = {
+      REQUIRE_LOCAL_ONLY: 'false',
+      AI_PROVIDER: 'ollama',
+      OLLAMA_MODEL: 'qwen2.5:7b-instruct',
+    };
+    const cfg = aiConfigFromEnv(cloudOllama);
+    expect(cfg.provider).toBe('ollama');
+    expect(cfg.fallbackModels).toEqual([]);              // выглядит как «локально»
+    expect(isLocalOnly(cloudOllama)).toBe(false);         // но локальный режим выключен
+
+    expect(isLocalOnly(localEnv)).toBe(true);
+    // REQUIRE_LOCAL_ONLY не задан => по умолчанию включён (true)
+    expect(isLocalOnly({})).toBe(true);
+  });
+
+  it('в облачном режиме OLLAMA_FALLBACK_MODELS включает локальную цепочку', () => {
+    const cfg = applyClientOverrides(
+      aiConfigFromEnv({ REQUIRE_LOCAL_ONLY: 'false', OPENROUTER_API_KEY: 'sk' }),
+      { model: 'qwen2.5:7b-instruct' },
+      { REQUIRE_LOCAL_ONLY: 'false', OPENROUTER_API_KEY: 'sk', OLLAMA_FALLBACK_MODELS: 'qwen2.5:3b' },
+    );
+    expect(cfg.provider).toBe('ollama');
+    expect(cfg.fallbackModels).toEqual(['qwen2.5:3b']);
+  });
+
+  it('облачная цепочка настраивается через AI_FALLBACK_MODELS', () => {
+    const cfg = aiConfigFromEnv({ REQUIRE_LOCAL_ONLY: 'false', AI_FALLBACK_MODELS: 'fb-a,fb-b' });
+    expect(cfg.provider).toBe('openrouter');
+    expect(cfg.fallbackModels).toEqual(['fb-a', 'fb-b']);
+  });
+
+  it('пустая AI_FALLBACK_MODELS отключает облачную цепочку', () => {
+    const cfg = aiConfigFromEnv({ REQUIRE_LOCAL_ONLY: 'false', AI_FALLBACK_MODELS: '' });
+    expect(cfg.fallbackModels).toEqual([]);
+  });
+});
+
+/* --------------------------- Распознавание Ollama-моделей ---------------- */
+
+describe('looksLikeOllamaModel', () => {
+  const cloudEnv = { REQUIRE_LOCAL_ONLY: 'false' };
+
+  it('облачные ID содержат "/" и не считаются локальными', () => {
+    expect(looksLikeOllamaModel('openai/gpt-4o-mini', cloudEnv)).toBe(false);
+    expect(looksLikeOllamaModel('meta-llama/llama-3-70b-instruct', cloudEnv)).toBe(false);
+  });
+
+  it('тег версии и префикс ollama/ считаются локальными', () => {
+    expect(looksLikeOllamaModel('qwen2.5:7b-instruct', cloudEnv)).toBe(true);
+    expect(looksLikeOllamaModel('ollama/mistral', cloudEnv)).toBe(true);
+  });
+
+  it('в облачном режиме имя без тега локальным не считается', () => {
+    expect(looksLikeOllamaModel('llama3.1', cloudEnv)).toBe(false);
+  });
+
+  it('в локальном режиме любое имя без "/" считается локальным', () => {
+    // Раньше «llama3.1» (валидное имя Ollama без тега) молча отбрасывалось
+    expect(looksLikeOllamaModel('llama3.1', localEnv)).toBe(true);
+    expect(looksLikeOllamaModel('openai/gpt-4o-mini', localEnv)).toBe(false);
+  });
+
+  it('в облачном режиме совпадение с OLLAMA_MODEL считается локальным', () => {
+    expect(looksLikeOllamaModel('mistral', { ...cloudEnv, OLLAMA_MODEL: 'mistral' })).toBe(true);
   });
 });

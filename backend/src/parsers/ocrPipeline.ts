@@ -22,7 +22,7 @@ import { median } from '@recon/shared';
 import { loadPdfjs } from './pdfParser.js';
 import { assignColumns, segmentsToGrid, trimGridEdges } from './tableGeometry.js';
 import type { Segment } from './tableGeometry.js';
-import { analyzeImageQuality, applyAdaptivePreprocessing, calculateDynamicThreshold, type ImageQualityMetrics } from './imageQuality.js';
+import { analyzeImageQuality, applyAdaptivePreprocessing, calculateDynamicThreshold } from './imageQuality.js';
 
 /* ------------------------------ Типы pdf.js ------------------------------- */
 
@@ -155,15 +155,34 @@ export async function warmUpOcr(): Promise<{ dir: string; files: string[] }> {
  * затем разбиение строк на ячейки по горизонтальным зазорам относительно
  * высоты текста. Чистая функция — тестируется без tesseract.
  */
+export type ClusterThresholds = {
+  lineClusterFactor: number;
+  cellGapFactor: number;
+};
+
+const DEFAULT_THRESHOLDS: ClusterThresholds = {
+  lineClusterFactor: 0.7,
+  cellGapFactor: 0.45,
+};
+
+/**
+ * Группировка слов в строки по вертикальному центру (скользящее среднее базы),
+ * затем разбиение строк на ячейки по горизонтальным зазорам относительно
+ * высоты текста. Чистая функция — тестируется без tesseract.
+ *
+ * Пороги кластеризации можно задать постранично: dynamicThresholds[i]
+ * применяется к странице i, отсутствующие значения берутся из дефолта.
+ */
 export function buildPagesOfLinesFromWords(
   pagesOfWords: OcrWordBox[][],
-  dynamicThreshold?: { lineClusterFactor: number; cellGapFactor: number }
+  dynamicThresholds?: ClusterThresholds[],
 ): Segment[][][] {
-  const lineFactor = dynamicThreshold?.lineClusterFactor ?? 0.7;
-  const cellGapFactor = dynamicThreshold?.cellGapFactor ?? 0.45;
-  const cellGapMaxFactor = dynamicThreshold?.cellGapFactor ? dynamicThreshold.cellGapFactor + 0.35 : 0.8;
+  return pagesOfWords.map((words, pageIdx) => {
+    const thresholds = dynamicThresholds?.[pageIdx] ?? DEFAULT_THRESHOLDS;
+    const lineFactor = thresholds.lineClusterFactor;
+    const cellGapFactor = thresholds.cellGapFactor;
+    const cellGapMaxFactor = cellGapFactor + 0.35;
 
-  return pagesOfWords.map((words) => {
     if (words.length === 0) return [];
 
     const heights = words.map((w) => Math.max(1, w.y1 - w.y0));
@@ -226,30 +245,13 @@ function zoomFor(baseWidth: number): number {
   return Math.min(4, Math.max(2, 1800 / baseWidth));
 }
 
-async function renderPageToPng(page: RenderPageLike, qualityAnalysis?: { isNoisy: boolean; isBlurry: boolean; estimatedDpi: number; qualityScore?: number; width?: number; height?: number }): Promise<Buffer> {
+async function renderPageToPng(page: RenderPageLike): Promise<Buffer> {
   const base = page.getViewport({ scale: 1 });
-  
-  // Динамический масштаб на основе качества изображения
-  let scale = zoomFor(base.width);
-  if (qualityAnalysis) {
-    if (qualityAnalysis.estimatedDpi < 200 || qualityAnalysis.isBlurry) {
-      scale = Math.max(scale, 3.5); // Увеличиваем масштаб для размытых или низкого DPI
-    }
-  }
-  
-  const viewport = page.getViewport({ scale });
+  const viewport = page.getViewport({ scale: zoomFor(base.width) });
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
   const ctx = canvas.getContext('2d');
   await page.render({ canvasContext: ctx, viewport }).promise;
-  const raw = await canvas.encode('png');
-
-  // Адаптивная предобработка на основе анализа качества
-  if (qualityAnalysis && (qualityAnalysis.isNoisy || qualityAnalysis.isBlurry)) {
-    return applyAdaptivePreprocessing(raw, qualityAnalysis as ImageQualityMetrics);
-  }
-  
-  // Стандартная предобработка: ч/б + растяжка контраста
-  return sharp(raw).grayscale().normalise().png().toBuffer();
+  return canvas.encode('png');
 }
 
 /* -------------------------------- Пайплайн -------------------------------- */
@@ -269,26 +271,28 @@ export async function parsePdfWithOcr(buffer: Buffer, fileName: string): Promise
   }).promise;
 
   try {
-    // Анализируем качество первой страницы для определения параметров обработки
-    const firstPage = await doc.getPage(1);
-    const firstPng = await renderPageToPng(firstPage);
-    const qualityAnalysis = await analyzeImageQuality(firstPng);
-    firstPage.cleanup?.();
-
     const pagesOfWords: OcrWordBox[][] = [];
+    const thresholds: ClusterThresholds[] = [];
+
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
-      const png = await renderPageToPng(page, qualityAnalysis as any);
+      const png = await renderPageToPng(page);
+
+      // Качество оцениваем по каждой странице отдельно и применяем
+      // адаптивную предобработку только к проблемной (без второго рендера)
+      const metrics = await analyzeImageQuality(png);
+      const prepared = metrics.isNoisy || metrics.isBlurry
+        ? await applyAdaptivePreprocessing(png, metrics)
+        : await sharp(png).grayscale().normalise().png().toBuffer();
+
       // В tesseract.js v6 блоки/слова по умолчанию отключены — запрашиваем явно
-      const { data } = await worker.recognize(png, {}, { blocks: true });
+      const { data } = await worker.recognize(prepared, {}, { blocks: true });
       pagesOfWords.push(wordsFromTesseractPage(data));
+      thresholds.push(calculateDynamicThreshold(metrics));
       page.cleanup?.();
     }
 
-    // Динамические пороги кластеризации на основе качества
-    const dynamicThreshold = calculateDynamicThreshold(qualityAnalysis);
-    
-    const pagesOfLines = buildPagesOfLinesFromWords(pagesOfWords, dynamicThreshold);
+    const pagesOfLines = buildPagesOfLinesFromWords(pagesOfWords, thresholds);
     const assignment = assignColumns(pagesOfLines);
     const rows: string[][] = segmentsToGrid(pagesOfLines, assignment);
     const grid: Grid = trimGridEdges(rows, (v) => !v).map((row) =>

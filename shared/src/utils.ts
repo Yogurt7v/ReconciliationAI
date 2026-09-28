@@ -1,7 +1,11 @@
 import type { CellValue } from './types.js';
 
-/** Приведение значения ячейки к строке с нормализацией неразрывных пробелов */
-export function cellToString(v: CellValue): string {
+/**
+ * Приведение значения ячейки к строке с нормализацией неразрывных пробелов.
+ * undefined допустим: индексация Grid под noUncheckedIndexedAccess даёт
+ * CellValue | undefined, и такой промах считается пустой ячейкой.
+ */
+export function cellToString(v: CellValue | undefined): string {
   if (v === null || v === undefined) return '';
   return String(v).replace(/\u00A0/g, ' ').trim();
 }

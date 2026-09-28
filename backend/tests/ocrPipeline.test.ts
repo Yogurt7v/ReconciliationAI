@@ -109,6 +109,37 @@ describe('buildPagesOfLinesFromWords + геометрия', () => {
     expect(grid[1]).toEqual(['№', 'Дата', 'Сумма']);
     expect(grid[2]).toEqual(['101', '05.03.2026', '15000,00']);
   });
+
+  it('применяет пороги кластеризации постранично', () => {
+    // Хелпер возвращает две строки на «странице»
+    const pageWords = (): OcrWordBox[] => [
+      word('A', 20, 100),
+      word('B', 20, 160),
+    ];
+
+    // Страница 0: большой lineFactor сливает строки в одну; страница 1: дефолт — раздельно
+    const pagesOfLines = buildPagesOfLinesFromWords([pageWords(), pageWords()], [
+      { lineClusterFactor: 50, cellGapFactor: 0.45 },
+    ]);
+
+    expect(pagesOfLines).toHaveLength(2);
+    expect(pagesOfLines[0]!).toHaveLength(1);
+    expect(pagesOfLines[1]!).toHaveLength(2);
+  });
+
+  it('влияние cellGapFactor на склейку ячеек', () => {
+    // Два слова с зазором 20 px, высота шрифта ~12 → medH*0.45 ≈ 5.4.
+    // С большим cellGapFactor слова склеиваются (без пробела — это фрагменты),
+    // со строгим — остаются раздельными ячейками.
+    const words: OcrWordBox[] = [word('Акт', 20, 100, 40), word('сверки', 80, 100, 50)];
+    const loose = buildPagesOfLinesFromWords([words], [{ lineClusterFactor: 0.7, cellGapFactor: 10 }]);
+    const strict = buildPagesOfLinesFromWords([words], [{ lineClusterFactor: 0.7, cellGapFactor: 0.1 }]);
+
+    expect(loose[0]!).toHaveLength(1);
+    expect(loose[0]![0]![0]!.text).toBe('Актсверки');
+    // в одной строке — две ячейки
+    expect(strict[0]![0]).toHaveLength(2);
+  });
 });
 
 describe.skipIf(!process.env.RUN_OCR_E2E)('parsePdfWithOcr (интеграция, RUN_OCR_E2E=1)', () => {

@@ -4,7 +4,7 @@
 # Внутри одного контейнера работают 3 процесса (supervisord):
 #   1. Ollama     — локальная LLM (модель запечена в образ, интернет не нужен)
 #   2. Backend    — Fastify API (порт 5057)
-#   3. Frontend   — Vite dev-сервер (порт 5173, проксирует /api на backend)
+#   3. Frontend   — Vite dev-сервер (порт 3000, проксирует /api на backend)
 #
 # СЕКРЕТОВ В ОБРАЗЕ НЕТ: режим REQUIRE_LOCAL_ONLY=true не использует никаких
 # API-ключей. Всё поведение настраивается обычными ENV при запуске.
@@ -18,11 +18,11 @@
 #   docker load < recon-ai-local.tar.gz
 #
 # Запуск:
-#   docker run -d -p 5173:5173 -p 5057:5057 --name recon-ai recon-ai:local
-#   Открыть http://localhost:5173
+#   docker run -d -p 3000:3000 -p 5057:5057 --name recon-ai recon-ai:local
+#   Открыть http://localhost:3000
 #
 # GPU (NVIDIA) на мощной машине — просто добавьте флаг, без пересборки:
-#   docker run -d --gpus=all -p 5173:5173 ...
+#   docker run -d --gpus=all -p 3000:3000 ...
 # Без GPU всё работает на CPU (медленнее, но полностью функционально).
 # ============================================================================
 
@@ -78,6 +78,6 @@ RUN ollama serve & \
 
 COPY supervisord.conf /etc/supervisor/conf.d/recon.conf
 
-EXPOSE 5173 5057 11434
+EXPOSE 3000 5057
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/recon.conf"]

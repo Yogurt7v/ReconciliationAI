@@ -3,12 +3,18 @@
  * Сеть не используется — global.fetch подменяется заглушками.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { looksTwoSided, parseTwoSidedPdf } from '../src/services/ai/structuredParse.js';
 import type { AiConfig } from '../src/services/ai/client.js';
 
-const CFG: AiConfig = { apiKey: 'test-key', model: 'm' };
+const CFG: AiConfig = {
+  apiKey: 'test-key',
+  model: 'm',
+  baseUrl: 'https://example.invalid/v1/chat/completions',
+  provider: 'openrouter',
+  fallbackModels: [],
+};
 
 function mockFetchJson(response: unknown): ReturnType<typeof vi.fn> {
   return vi.fn().mockResolvedValue(
@@ -19,8 +25,14 @@ function mockFetchJson(response: unknown): ReturnType<typeof vi.fn> {
   );
 }
 
+// По умолчанию REQUIRE_LOCAL_ONLY=true — облачные вызовы заблокированы.
+beforeEach(() => {
+  process.env.REQUIRE_LOCAL_ONLY = 'false';
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete process.env.REQUIRE_LOCAL_ONLY;
 });
 
 /* -------------------------------------------------------------------------- */
@@ -113,7 +125,7 @@ const VALID_RESPONSE = {
 
 describe('parseTwoSidedPdf', () => {
   it('без ключа → null', async () => {
-    const result = await parseTwoSidedPdf({ apiKey: null, model: 'm' }, 'текст', 'file.pdf');
+    const result = await parseTwoSidedPdf({ ...CFG, apiKey: null }, 'текст', 'file.pdf');
     expect(result).toBeNull();
   });
 

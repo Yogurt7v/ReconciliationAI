@@ -64,14 +64,35 @@ OCR-пайплайн тестируется опционально: `RUN_OCR_E2E
 
 ## Переменные окружения (backend)
 
+Два разных файла: `backend/.env` читает dotenv в `backend/src/index.ts` (локальная
+разработка), `./.env` читает `env_file` в `docker-compose.yml` (контейнеры).
+Полный пример с комментариями — [.env.example](.env.example).
+
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `OPENROUTER_API_KEY` | — | ключ OpenRouter; без него AI отключается (деградация) |
-| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | модель для структуры/гипотез |
-| `PORT` | `5000` | порт API |
+| `REQUIRE_LOCAL_ONLY` | `true` | только локальная модель Ollama; облачные вызовы и fallback отключены |
+| `AI_PROVIDER` | `ollama` | провайдер: `openrouter` \| `ollama` (игнорируется при `REQUIRE_LOCAL_ONLY=true`) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | адрес Ollama (в compose — `http://ollama:11434`) |
+| `OLLAMA_MODEL` | `qwen2.5:7b-instruct` | локальная модель по умолчанию |
+| `OLLAMA_API_KEY` | `ollama` | нужен, только если Ollama за прокси с авторизацией |
+| `OLLAMA_FALLBACK_MODELS` | — | локальная цепочка; активна только при `REQUIRE_LOCAL_ONLY=false` |
+| `OPENROUTER_API_KEY` | — | ключ OpenRouter; активен только при `REQUIRE_LOCAL_ONLY=false` |
+| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | облачная модель для структуры/гипотез |
+| `AI_FALLBACK_MODELS` | llama-3-70b, mistral-large | облачная цепочка; **пустое значение отключает** |
+| `PORT` | `5057` | порт API |
 | `MAX_FILE_MB` | `50` | лимит размера файла |
 | `LOG_LEVEL` | `info` | уровень логов pino |
 | `PDF_FONT_PATH` | авто-поиск | TTF с кириллицей для PDF-отчёта |
+
+> ⚠️ `REQUIRE_LOCAL_ONLY=true` — значение по умолчанию. Установкам, у которых заполнен
+> только `OPENROUTER_API_KEY`, нужно выставить `REQUIRE_LOCAL_ONLY=false`, иначе AI
+> деградирует к эвристикам.
+
+### Бюджет запросов к AI
+
+Основная модель — до 2 попыток (повтор при 5xx/сети/таймауте), каждая fallback-модель —
+ровно 1 попытка, без пауз между моделями. Невременная ошибка (4xx, кроме 429)
+прекращает цепочку сразу: смена модели не поможет. Суммарно не более ~4 запросов.
 
 ## API
 
@@ -106,95 +127,73 @@ reconciliation → analysis → done` (`failed`, `cancelled`).
 
 ## Запуск в Docker (локальная модель через Ollama)
 
-### Вариант B — всё в одном контейнере (профиль `with-ollama`)
+Три варианта. Образы работают в режиме `REQUIRE_LOCAL_ONLY=true`: ключи API не нужны,
+данные не покидают машину.
 
-Docker сам поднимет контейнер Ollama; скачивать и устанавливать Ollama на хост не нужно.
+### Вариант B — всё в контейнерах (профиль `with-ollama`)
+
+Docker сам поднимет контейнер Ollama; устанавливать Ollama на хост не нужно.
 
 ```bash
-# 1. Конфигурация
+# 1. Конфигурация (compose читает ./.env, а не backend/.env)
 cp .env.example .env
-#   В .env установите:
-#     AI_PROVIDER=ollama
-#     OLLAMA_BASE_URL=http://ollama:11434
-#     OLLAMA_MODEL=qwen2.5:7b-instruct
+#   Проверьте: OLLAMA_BASE_URL=http://ollama:11434, OLLAMA_MODEL=qwen2.5:7b-instruct
 
-# 2. Сборка и запуск всех сервисов (backend + frontend + ollama)
+# 2. Сборка и запуск (backend + frontend + ollama)
 docker compose --profile with-ollama up -d --build
 
-# 3. ОБЯЗАТЕЛЬНО: скачать модель внутрь контейнера (один раз, хранится в volume ollama-data)
+# 3. ОБЯЗАТЕЛЬНО: скачать модель внутрь контейнера (один раз, хранится в volume)
 docker compose exec ollama ollama pull qwen2.5:7b-instruct
-
-# 4. Проверить, что Ollama видит модель
 docker compose exec ollama ollama list
 
-# 5. Открыть приложение
-open http://localhost:5173        # macOS
-xdg-open http://localhost:5173    # Linux
+# 4. Открыть приложение
+open http://localhost:3000        # macOS
+xdg-open http://localhost:3000    # Linux
 ```
 
 Полезные команды:
 
 ```bash
-docker compose logs -f backend          # логи распознавания (видно выбор модели/fallback)
-docker compose down                     # остановить
+docker compose logs -f backend     # логи распознавания (видно выбор модели и fallback)
+docker compose down                # остановить
 docker compose --profile with-ollama up -d   # запустить снова (модель останется в volume)
-docker volume rm recon_ollama-data      # удалить скачанные модели (если надо освободить место)
+
+# Удалить скачанные модели (имя volume = префикс проекта + "ollama-data"):
+docker volume ls | grep ollama-data
+docker volume rm "$(basename "$PWD")_ollama-data"
 ```
 
 Требования к железу: ~5 ГБ RAM на модель 7B (CPU), ~6 ГБ VRAM при NVIDIA GPU.
-Без GPUcompose всё равно заработает на CPU, но медленнее. При недоступности выбранной модели
-backend автоматически переключится на fallback (`OLLAMA_FALLBACK_MODELS`).
+Без GPU compose всё равно заработает на CPU, но заметно медленнее.
+
+> По умолчанию fallback на другие модели **отключён** (`REQUIRE_LOCAL_ONLY=true`):
+> используется ровно одна локальная модель. Чтобы вернуть переключение внутри
+> локального режима, задайте `REQUIRE_LOCAL_ONLY=false` и заполните
+> `OLLAMA_FALLBACK_MODELS` — либо оставьте как есть и примите деградацию к
+> эвристикам при недоступности модели.
 
 ### Вариант A — Ollama уже стоит на хосте
 
 ```bash
-# В .env: AI_PROVIDER=ollama, OLLAMA_BASE_URL=http://host.docker.internal:11434
+# В .env: OLLAMA_BASE_URL=http://host.docker.internal:11434
 docker compose up -d --build backend frontend
 ```
 
-### Вариант C — самодостаточный all-in-one образ (`Dockerfile.allinone`)
+### Вариант C — самодостаточный all-in-one образ
 
-Один Docker-образ содержит ВСЁ: Ollama + запечённую модель + backend + frontend.
-Секретов в образе нет (режим `REQUIRE_LOCAL_ONLY=true` не использует API-ключи),
-поэтому `.env` для запуска **не нужен** — достаточно Dockerfile и одной команды.
-Образ можно перенести на другую машину офлайн (`docker save` / `docker load`).
+Один образ содержит ВСЁ: Ollama + запечённую модель + backend + frontend. Работает
+без интернета и без `ollama pull`. Подробная инструкция, офлайн-перенос на другую
+машину и FAQ — в **[Instruction.md](Instruction.md)**.
 
 ```bash
-# 1. Сборка (нужны интернет и ~20 ГБ свободного диска; модель ~4.7 ГБ)
+# Сборка (нужны интернет и ~20 ГБ свободного диска; модель ~4.7 ГБ)
 docker build -f Dockerfile.allinone -t recon-ai:local .
-#   или через compose:
-docker compose --profile allinone up -d --build
 
-# 2. Запуск
-docker run -d -p 5173:5173 -p 5057:5057 --name recon-ai recon-ai:local
-
-# 3. Приложение доступно БЕЗ интернета и без ollama pull:
-open http://localhost:5173        # macOS
-xdg-open http://localhost:5173    # Linux
+# Запуск
+docker run -d -p 3000:3000 -p 5057:5057 --name recon-ai recon-ai:local
+open http://localhost:3000
 ```
 
-Перенос на более мощную машину (офлайн, без реестра):
-
-```bash
-# На сборочной машине:
-docker save recon-ai:local | gzip > recon-ai-local.tar.gz   # ~4-6 ГБ
-# Перенесите архив (scp/флешка) и на целевой машине:
-gunzip -c recon-ai-local.tar.gz | docker load
-docker run -d -p 5173:5173 --name recon-ai recon-ai:local
-```
-
-GPU на целевой машине (без пересборки образа):
-
-```bash
-# Требуется NVIDIA Driver + NVIDIA Container Toolkit на хосте:
-docker run -d --gpus=all -p 5173:5173 --name recon-ai recon-ai:local
-```
-
-Важно:
-- Архитектура CPU: образ собирается под архитектуру хоста (`linux/amd64` или `arm64`).
-  Для переноса между разными архитектурами используйте multi-arch сборку:
-  `docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.allinone -t user/recon-ai:local --push .`
-- Смена модели: отредактируйте `OLLAMA_MODEL` и строку `ollama pull` в `Dockerfile.allinone`,
-  пересоберите образ.
-- Логи процессов внутри контейнера: `docker exec recon-ai cat /var/log/backend.log`
-  (или `/var/log/ollama.log`, `/var/log/frontend.log`).
+> Фронтенд в контейнерах — это Vite dev-сервер, а не собранный бандл: образ
+> предназначен для локального запуска, а не для продакшена. Для продакшена
+> см. раздел «Деплой» выше.

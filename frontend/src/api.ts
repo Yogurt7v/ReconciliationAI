@@ -54,10 +54,26 @@ export interface TestAnalyzeResponse {
   sheetName: string | null;
   pages: number | null;
   result: DocumentData;
+  /** Проблемы согласованности данных, найденные при валидации */
+  warnings?: string[];
   debug: AiDebugInfo;
 }
 
+/** Фактическая AI-конфигурация backend (GET /api/health) */
+export interface AiRuntimeInfo {
+  provider: 'openrouter' | 'ollama';
+  /** Модель, которая реально применяется (может отличаться от выбранной в UI) */
+  model: string;
+  /** true — облачные модели и fallback отключены (REQUIRE_LOCAL_ONLY) */
+  localOnly: boolean;
+  hasApiKey: boolean;
+}
+
 export const api = {
+  health(): Promise<{ ok: boolean; ai: AiRuntimeInfo }> {
+    return request('/api/health');
+  },
+
   testAnalyze(file: File, model?: string, apiKey?: string): Promise<TestAnalyzeResponse> {
     const form = new FormData();
     form.append('file', file);

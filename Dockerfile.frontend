@@ -15,6 +15,7 @@ RUN pnpm install --frozen-lockfile
 COPY shared/ shared/
 COPY frontend/ frontend/
 
-EXPOSE 5173
+EXPOSE 3000
 
-CMD ["pnpm", "--filter", "@recon/frontend", "dev", "--", "--host", "0.0.0.0"]
+# Порт должен совпадать с server.port во frontend/vite.config.ts
+CMD ["pnpm", "--filter", "@recon/frontend", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]

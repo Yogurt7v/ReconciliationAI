@@ -19,7 +19,7 @@ import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES } from '@recon/shared';
 import { parseExcel } from './parsers/excelParser.js';
 import { parsePdf } from './parsers/pdfParser.js';
 import { rateLimiter } from './rateLimit.js';
-import { aiConfigFromEnv, applyClientOverrides, type AiConfig } from './services/ai/client.js';
+import { aiConfigFromEnv, applyClientOverrides, isLocalOnly, type AiConfig } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
 import { fullReconciliation } from './services/ai/reconciliation.js';
 
@@ -92,11 +92,9 @@ app.post('/api/test/analyze', async (req, reply) => {
         return reply.code(413).send({ error: message });
       }
     } else if (part.type === 'field' && part.fieldname === 'apiKey') {
-      const value = await (part as any).toBuffer();
-      clientApiKey = value.toString().trim() || undefined;
+      clientApiKey = String(part.value).trim() || undefined;
     } else if (part.type === 'field' && part.fieldname === 'model') {
-      const value = await (part as any).toBuffer();
-      clientModel = value.toString().trim() || undefined;
+      clientModel = String(part.value).trim() || undefined;
     }
   }
 
@@ -142,13 +140,14 @@ app.post('/api/test/analyze', async (req, reply) => {
   });
 
   try {
-    const { result, debug } = await testAnalyze(source.grid, config);
+    const { result, warnings, debug } = await testAnalyze(source.grid, config);
     return reply.send({
       fileName: uploaded.filename,
       sourceKind: source.kind,
       sheetName: source.sheetName,
       pages: source.pages,
       result,
+      warnings,
       debug,
     });
   } catch (err) {
@@ -162,7 +161,20 @@ app.post('/api/test/analyze', async (req, reply) => {
 
 /* ---------------------------------- Здоровье ------------------------------ */
 
-app.get('/api/health', async () => ({ ok: true }));
+app.get('/api/health', async () => {
+  // Фронтенд использует это, чтобы показывать реально применяемую модель
+  // и прятать облачные настройки в режиме «только локально».
+  const cfg = aiConfigFromEnv();
+  return {
+    ok: true,
+    ai: {
+      provider: cfg.provider,
+      model: cfg.model,
+      localOnly: isLocalOnly(),
+      hasApiKey: cfg.apiKey !== null,
+    },
+  };
+});
 
 /* ----------------------------- Сверка ------------------------------------ */
 

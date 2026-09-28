@@ -14,7 +14,7 @@
 |----------|-------|--------------------------------------------------------|
 | Ollama   | 11434 | Локальная LLM. Модель **запечена в образ**              |
 | Backend  | 5057  | Fastify API: парсинг PDF/Excel, OCR, маппинг, сверка    |
-| Frontend | 5173  | Веб-интерфейс (Vite), проксирует `/api` на backend      |
+| Frontend | 3000  | Веб-интерфейс (Vite), проксирует `/api` на backend      |
 
 Особенности:
 
@@ -50,8 +50,8 @@ docker info | grep -i arch
 ## 2. Сборка образа
 
 ```bash
-# 1. Клонируем ветку с улучшениями
-git clone -b feature/ai-improvements https://github.com/Yogurt7v/ReconciliationAI.git
+# 1. Получаем код проекта
+git clone https://github.com/Yogurt7v/ReconciliationAI.git
 cd ReconciliationAI
 
 # 2. Собираем образ (долгий шаг: ~15–40 минут, скачивает модель ~4.7 ГБ)
@@ -85,14 +85,14 @@ docker images | grep recon-ai
 ```bash
 docker run -d \
   --name recon-ai \
-  -p 5173:5173 \
+  -p 3000:3000 \
   -p 5057:5057 \
   recon-ai:local
 ```
 
 Подождите 20–60 секунд (Ollama должна поднять модель в память), затем:
 
-- **Откройте в браузере:** http://localhost:5173
+- **Откройте в браузере:** http://localhost:3000
 - Backend API напрямую (опционально): http://localhost:5057
 
 Проверка здоровья:
@@ -117,7 +117,7 @@ docker rm -f recon-ai
 docker run -d \
   --name recon-ai \
   --gpus=all \
-  -p 5173:5173 \
+  -p 3000:3000 \
   -p 5057:5057 \
   recon-ai:local
 ```
@@ -139,7 +139,7 @@ docker rm -f recon-ai           # удалить контейнер (образ 
 сохранять их между удалениями контейнера — добавьте volume:
 
 ```bash
-docker run -d --name recon-ai -p 5173:5173 -p 5057:5057 \
+docker run -d --name recon-ai -p 3000:3000 -p 5057:5057 \
   -v recon-uploads:/app/backend/uploads \
   -v recon-reports:/app/backend/reports \
   recon-ai:local
@@ -149,7 +149,7 @@ docker run -d --name recon-ai -p 5173:5173 -p 5057:5057 \
 
 ## 4. Как пользоваться приложением
 
-1. Откройте **http://localhost:5173**.
+1. Откройте **http://localhost:3000**.
 2. Выберите режим:
    - **Анализ одного файла** — загрузите PDF (текстовый или скан) или XLSX.
    - **Сравнение двух файлов** — загрузите ровно 2 файла (акт ↔ акт,
@@ -195,13 +195,13 @@ scp recon-ai-local.tar.gz user@target-host:/data/
 gunzip -c /data/recon-ai-local.tar.gz | docker load
 
 # Запуск (CPU):
-docker run -d --name recon-ai -p 5173:5173 -p 5057:5057 recon-ai:local
+docker run -d --name recon-ai -p 3000:3000 -p 5057:5057 recon-ai:local
 
 # Запуск (NVIDIA GPU — рекомендуется на мощной машине):
-docker run -d --name recon-ai --gpus=all -p 5173:5173 -p 5057:5057 recon-ai:local
+docker run -d --name recon-ai --gpus=all -p 3000:3000 -p 5057:5057 recon-ai:local
 ```
 
-Откройте http://localhost:5173 на целевой машине — всё то же самое, модель уже внутри.
+Откройте http://localhost:3000 на целевой машине — всё то же самое, модель уже внутри.
 
 ⚠️ Ещё раз про архитектуру: `amd64`-образ не запустится нормально на `arm64`
 (и наоборот). Проверьте целевую машину: `uname -m` → `x86_64` = amd64,
@@ -271,7 +271,7 @@ docker exec recon-ai curl -s http://127.0.0.1:11434/api/tags
 **6. Нужно поменять модель/поведение без пересборки.**
 Часть параметров переопределяется при запуске ENV-флагами, например:
 ```bash
-docker run -d --name recon-ai -p 5173:5173 \
+docker run -d --name recon-ai -p 3000:3000 \
   -e OLLAMA_MODEL=qwen2.5:7b-instruct \
   recon-ai:local
 ```
@@ -285,7 +285,10 @@ docker run -d --name recon-ai -p 5173:5173 \
 - В образе **нет секретов**: никаких API-ключей, токенов и паролей.
 - Режим `REQUIRE_LOCAL_ONLY=true` гарантирует, что данные документов
   **никуда не уходят** — весь разбор происходит внутри контейнера.
-- Порты (5173/5057) публикуйте наружу только при необходимости; для локального
+- Порты (3000/5057) публикуйте наружу только при необходимости; для локального
   использования достаточно localhost.
+- Ollama внутри контейнера слушает только `127.0.0.1:11434` (в `supervisord.conf`),
+  а порт 11434 наружу не публикуется: у Ollama нет аутентификации, поэтому
+  открывать его в сеть контейнеров нельзя.
 - При переносе `tar.gz` учитывайте: файл содержит исходники и модель — ведите
   себя с ним как с кодом репозитория.

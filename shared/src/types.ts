@@ -261,6 +261,8 @@ export interface AiDebugInfo {
   errorMessage: string | null;
   rawPreview: string | null;
   attempts: number;
+  /** Была ли использована fallback-модель вместо основной */
+  fallbackUsed?: boolean;
 }
 
 /** Результат AI-сравнения двух актов сверки */
