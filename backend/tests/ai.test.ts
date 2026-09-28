@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { AiUnavailableError, requestJson } from '../src/services/ai/client.js';
+import { AiUnavailableError, requestJson, type AiConfig } from '../src/services/ai/client.js';
 import { assistStructure } from '../src/services/ai/structureAssist.js';
 import { aiHypotheses, ruleBasedHypotheses } from '../src/services/ai/hypotheses.js';
 import type { Grid, HypothesisContext } from '@recon/shared';
@@ -16,12 +16,23 @@ afterEach(() => {
   delete process.env.OPENROUTER_API_KEY;
 });
 
+/** Минимальная конфигурация для тестов клиента (OpenAI-совместимый endpoint) */
+const baseConfig = (overrides: Partial<AiConfig> = {}): AiConfig => ({
+  apiKey: 'k',
+  model: 'm',
+  baseUrl: 'https://example.invalid/v1/chat/completions',
+  provider: 'openrouter',
+  fallbackModels: [],
+  ...overrides,
+});
+
+
 /* -------------------------------- Клиент ---------------------------------- */
 
 describe('requestJson', () => {
   it('без ключа сразу бросает AiUnavailableError', async () => {
     await expect(
-      requestJson({ apiKey: null, model: 'm' }, 'sys', {}),
+      requestJson(baseConfig({ apiKey: null }), 'sys', {}),
     ).rejects.toBeInstanceOf(AiUnavailableError);
   });
 
@@ -31,7 +42,7 @@ describe('requestJson', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const out = await requestJson<{ ok: number }>({ apiKey: 'k', model: 'm' }, 'sys', {});
+    const out = await requestJson<{ ok: number }>(baseConfig(), 'sys', {});
     expect(out.data).toEqual({ ok: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -45,7 +56,7 @@ describe('requestJson', () => {
       );
     vi.stubGlobal('fetch', fetchMock);
 
-    const out = await requestJson<string>({ apiKey: 'k', model: 'm' }, 'sys', {});
+    const out = await requestJson<string>(baseConfig(), 'sys', {});
     expect(out.data).toBe('yes');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -56,7 +67,7 @@ describe('requestJson', () => {
       .mockResolvedValue(new Response(JSON.stringify({ error: { message: 'bad' } }), { status: 400 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(requestJson({ apiKey: 'k', model: 'm' }, 'sys', {})).rejects.toBeInstanceOf(
+    await expect(requestJson(baseConfig(), 'sys', {})).rejects.toBeInstanceOf(
       AiUnavailableError,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -76,7 +87,7 @@ describe('requestJson', () => {
           ),
       ),
     );
-    await expect(requestJson({ apiKey: 'k', model: 'm' }, 'sys', {})).rejects.toThrow(/JSON/);
+    await expect(requestJson(baseConfig(), 'sys', {})).rejects.toThrow(/JSON/);
   });
 });
 
@@ -238,7 +249,7 @@ describe('aiHypotheses', () => {
       ),
     );
 
-    const out = await aiHypotheses({ apiKey: 'k', model: 'm' }, ctxWith({}));
+    const out = await aiHypotheses(baseConfig(), ctxWith({}));
     expect(out).not.toBeNull();
     expect(out!.length).toBe(1);
     expect(out![0]!.docNumber).toBe('7');
@@ -247,12 +258,12 @@ describe('aiHypotheses', () => {
 
   it('при ошибке сети возвращает null (деградация)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-    const out = await aiHypotheses({ apiKey: 'k', model: 'm' }, ctxWith({}));
+    const out = await aiHypotheses(baseConfig(), ctxWith({}));
     expect(out).toBeNull();
   });
 
   it('без ключа возвращает null', async () => {
-    const out = await aiHypotheses({ apiKey: null, model: 'm' }, ctxWith({}));
+    const out = await aiHypotheses(baseConfig({ apiKey: null }), ctxWith({}));
     expect(out).toBeNull();
   });
 });

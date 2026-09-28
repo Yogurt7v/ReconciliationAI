@@ -19,7 +19,7 @@ import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES } from '@recon/shared';
 import { parseExcel } from './parsers/excelParser.js';
 import { parsePdf } from './parsers/pdfParser.js';
 import { rateLimiter } from './rateLimit.js';
-import { aiConfigFromEnv } from './services/ai/client.js';
+import { aiConfigFromEnv, type AiConfig } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
 import { fullReconciliation } from './services/ai/reconciliation.js';
 
@@ -78,6 +78,7 @@ async function readUploadFile(part: unknown): Promise<UploadedFile> {
 app.post('/api/test/analyze', async (req, reply) => {
   let uploaded: UploadedFile | null = null;
   let clientApiKey: string | undefined;
+  let clientModel: string | undefined;
 
   for await (const part of req.parts()) {
     if (part.type === 'file' && part.fieldname === 'file') {
@@ -93,6 +94,9 @@ app.post('/api/test/analyze', async (req, reply) => {
     } else if (part.type === 'field' && part.fieldname === 'apiKey') {
       const value = await (part as any).toBuffer();
       clientApiKey = value.toString().trim() || undefined;
+    } else if (part.type === 'field' && part.fieldname === 'model') {
+      const value = await (part as any).toBuffer();
+      clientModel = value.toString().trim() || undefined;
     }
   }
 
@@ -130,7 +134,12 @@ app.post('/api/test/analyze', async (req, reply) => {
   }
 
   const envConfig = aiConfigFromEnv();
-  const config = { ...envConfig, apiKey: clientApiKey ?? envConfig.apiKey };
+  // Клиентский apiKey/model имеют приоритет над env (для локальных моделей ключ не нужен)
+  const config: AiConfig = {
+    ...envConfig,
+    apiKey: clientApiKey ?? envConfig.apiKey,
+    model: clientModel ?? envConfig.model,
+  };
 
   try {
     const { result, debug } = await testAnalyze(source.grid, config);

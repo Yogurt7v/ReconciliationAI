@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { AI_MODELS, DEFAULT_MODEL, API_KEY_STORAGE_KEY } from '../config';
+import { AI_MODELS, DEFAULT_MODEL, API_KEY_STORAGE_KEY, LOCAL_MODEL_PRESETS } from '../config';
 import { XIcon } from './icons';
 
 interface Props {
@@ -88,14 +88,15 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
               <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">
                 openrouter.ai/keys
               </a>
+              . Не требуется для локальных моделей (Ollama).
             </p>
           </div>
 
-          {/* Model Selection */}
-          {AI_MODELS.length > 0 && (
+          {/* Model Selection: grouped by provider */}
+          {AI_MODELS.some((m) => m.provider !== 'local') && (
             <div className="modal-model-list">
-              <p className="modal-label">Выберите модель:</p>
-              {AI_MODELS.map((m) => (
+              <p className="modal-label">Облачные модели (OpenRouter):</p>
+              {AI_MODELS.filter((m) => m.provider !== 'local').map((m) => (
                 <label key={m.id} className="modal-model-option">
                   <input
                     type="radio"
@@ -113,6 +114,30 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
             </div>
           )}
 
+          {AI_MODELS.some((m) => m.provider === 'local') && (
+            <div className="modal-model-list">
+              <p className="modal-label">Локальные модели (Ollama):</p>
+              {AI_MODELS.filter((m) => m.provider === 'local').map((m) => (
+                <label key={m.id} className="modal-model-option">
+                  <input
+                    type="radio"
+                    name="ai-model"
+                    value={m.id}
+                    checked={!isCustom && selected === m.id}
+                    onChange={() => { setSelected(m.id); setIsCustom(false); }}
+                  />
+                  <span className="modal-model-info">
+                    <span className="modal-model-name">{m.name}</span>
+                    <span className="modal-model-id">{m.id}</span>
+                  </span>
+                </label>
+              ))}
+              <p className="modal-hint">
+                Требуют запущенного backend с <code>AI_PROVIDER=ollama</code>. Данные не покидают ваш компьютер.
+              </p>
+            </div>
+          )}
+
           <div className="modal-custom-section">
             <label className="modal-model-option">
               <input
@@ -123,19 +148,25 @@ export function ModelModal({ open, model, apiKey, onClose, onSave }: Props) {
               />
               <span className="modal-model-info">
                 <span className="modal-model-name">Своя модель</span>
-                <span className="modal-model-id">ID из OpenRouter</span>
+                <span className="modal-model-id">ID из OpenRouter или имя модели Ollama</span>
               </span>
             </label>
             {isCustom && (
               <input
                 className="modal-custom-input"
                 type="text"
-                placeholder="openai/gpt-4o"
+                list="model-presets"
+                placeholder="openai/gpt-4o или qwen2.5:7b-instruct"
                 value={customValue}
                 onChange={(e) => setCustomValue(e.target.value)}
                 autoFocus
               />
             )}
+            <datalist id="model-presets">
+              {LOCAL_MODEL_PRESETS.map((id) => (
+                <option key={id} value={id} />
+              ))}
+            </datalist>
           </div>
         </div>
 

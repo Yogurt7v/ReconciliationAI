@@ -13,27 +13,69 @@ import type { AiDebugInfo } from '@recon/shared';
 
 export type { AiDebugInfo };
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-
-// Fallback-модели в порядке приоритета (от более умной к более доступной)
-export const FALLBACK_MODELS = [
+// Fallback-модели для облачного режима (OpenRouter)
+const OPENROUTER_FALLBACK_MODELS = [
   'meta-llama/llama-3-70b-instruct',
   'mistralai/mistral-large',
   'qwen/qwen-2.5-coder-32b-instruct',
 ];
 
+// Fallback-модели для локального режима (Ollama) по умолчанию.
+// Смысл имеют только реально установленные модели — список можно
+// переопределить через OLLAMA_FALLBACK_MODELS через запятую.
+const DEFAULT_OLLAMA_FALLBACK_MODELS = ['qwen2.5:3b-instruct', 'llama3.2:3b'];
+
+export type AiProvider = 'openrouter' | 'ollama';
+
 export interface AiConfig {
   apiKey: string | null;
   model: string;
+  /** Базовый URL Chat Completions API (включая /chat/completions) */
+  baseUrl: string;
+  provider: AiProvider;
+  /** Цепочка запасных моделей (без основной) */
+  fallbackModels: string[];
+}
+
+/** Разбор строки списка моделей ("a,b,c") */
+function parseModelList(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Конфиг из окружения (читается в момент вызова — удобно для тестов) */
 export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig {
+  const provider: AiProvider = env.AI_PROVIDER?.trim().toLowerCase() === 'ollama' ? 'ollama' : 'openrouter';
+
+  if (provider === 'ollama') {
+    // Внутри docker-compose: http://ollama:11434. На хосте: http://localhost:11434
+    const host = env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
+    return {
+      apiKey: env.OLLAMA_API_KEY?.trim() || 'ollama', // Ollama не проверяет ключ, но поле обязательнее по формату Bearer
+      model: env.OLLAMA_MODEL?.trim() || 'qwen2.5:7b-instruct',
+      baseUrl: `${host.replace(/\/$/, '')}/v1/chat/completions`,
+      provider: 'ollama',
+      fallbackModels: parseModelList(env.OLLAMA_FALLBACK_MODELS).length > 0
+        ? parseModelList(env.OLLAMA_FALLBACK_MODELS)
+        : DEFAULT_OLLAMA_FALLBACK_MODELS,
+    };
+  }
+
   return {
     apiKey: env.OPENROUTER_API_KEY?.trim() || null,
     model: env.OPENROUTER_MODEL?.trim() || 'openai/gpt-4o-mini',
+    baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    provider: 'openrouter',
+    fallbackModels: parseModelList(env.OPENROUTER_FALLBACKS) .length > 0
+      ? parseModelList(env.OPENROUTER_FALLBACKS)
+      : OPENROUTER_FALLBACK_MODELS,
   };
 }
+
+/** Экспорт для совместимости со старым кодом/тестами */
+export const FALLBACK_MODELS = OPENROUTER_FALLBACK_MODELS;
 
 export class AiUnavailableError extends Error {
   debug?: AiDebugInfo;
@@ -90,15 +132,20 @@ async function callOnce(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(OPENROUTER_URL, {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    // Реферер/титул требует только OpenRouter
+    if (config.provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://reconciliation-ai.local';
+      headers['X-Title'] = 'Reconciliation AI Agent';
+    }
+
+    const res = await fetch(config.baseUrl, {
       method: 'POST',
       signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://reconciliation-ai.local',
-        'X-Title': 'Reconciliation AI Agent',
-      },
+      headers,
       body: JSON.stringify({
         model: config.model,
         messages,
@@ -113,8 +160,8 @@ async function callOnce(
       const detail = body?.error?.message ?? `HTTP ${res.status}`;
       throw new AiUnavailableError(
         res.status >= 400 && res.status < 500 && res.status !== 429
-          ? 'Модель OpenRouter отклонила запрос'
-          : 'Ошибка запроса к OpenRouter',
+          ? `Модель ${config.provider} отклонила запрос`
+          : `Ошибка запроса к ${config.provider}`,
         detail,
         res.status,
       );
@@ -152,8 +199,8 @@ export async function requestJson<T>(
     { role: 'user', content: JSON.stringify(userPayload) },
   ];
 
-  // Список моделей для попытки: основная + fallback
-  const modelsToTry = [config.model, ...FALLBACK_MODELS.filter(m => m !== config.model)];
+  // Список моделей для попытки: основная + fallback (без дубликатов)
+  const modelsToTry = [config.model, ...config.fallbackModels.filter((m) => m !== config.model)];
   let fallbackUsed = false;
 
   const debug: AiDebugInfo = {
@@ -211,7 +258,7 @@ export async function requestJson<T>(
         lastError =
           err instanceof AiUnavailableError
             ? err
-            : new AiUnavailableError('Сетевая ошибка OpenRouter', String(err), undefined, fallbackUsed);
+            : new AiUnavailableError('Сетевая ошибка AI-провайдера', String(err), undefined, fallbackUsed);
         debug.errorMessage = lastError.detail ?? lastError.message;
         
         if (!lastError.retryable) break;
@@ -234,7 +281,7 @@ export async function requestJson<T>(
     lastError.fallbackUsed = fallbackUsed;
     throw lastError;
   }
-  const fallback = new AiUnavailableError('Неизвестная ошибка OpenRouter', undefined, undefined, fallbackUsed);
+  const fallback = new AiUnavailableError('Неизвестная ошибка AI-провайдера', undefined, undefined, fallbackUsed);
   fallback.debug = debug;
   throw fallback;
 }

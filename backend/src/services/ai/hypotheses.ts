@@ -16,7 +16,7 @@ import type {
   SummaryCounts,
 } from '@recon/shared';
 
-import { requestJson } from './client.js';
+import { requestJson, type AiConfig } from './client.js';
 
 /** Контекст, на котором строятся гипотезы (шаблонные и AI) */
 export interface HypothesisContext {
@@ -144,7 +144,7 @@ const SYSTEM_PROMPT = `Ты бухгалтер-аналитик. Тебе даю
  * (деградация к правилам, вызывающий код фиксирует это в reasoning).
  */
 export async function aiHypotheses(
-  config: { apiKey: string | null; model: string },
+  config: AiConfig,
   ctx: HypothesisContext,
 ): Promise<Hypothesis[] | null> {
   try {
