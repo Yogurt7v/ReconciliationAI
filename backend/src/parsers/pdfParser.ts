@@ -22,7 +22,7 @@ import type { AiStructuredResult, CellValue, Grid, RawSource } from '@recon/shar
 import { assignColumns, segmentsToGrid, trimGridEdges } from './tableGeometry.js';
 import type { Segment } from './tableGeometry.js';
 import { looksTwoSided, parseTwoSidedPdf } from '../services/ai/structuredParse.js';
-import type { AiConfig } from '../services/ai/client.js';
+import type { AiConfig, AiProgressCallback } from '../services/ai/client.js';
 
 const require = createRequire(import.meta.url);
 
@@ -270,6 +270,7 @@ export async function detectTwoSidedPdf(
   fileName: string,
   aiConfig: AiConfig,
   twoSidedRequested: boolean,
+  onProgress?: AiProgressCallback,
 ): Promise<AiStructuredResult | null> {
   if (source.needsOcr || source.grid.length === 0) return null;
 
@@ -277,5 +278,5 @@ export async function detectTwoSidedPdf(
 
   if (!twoSidedRequested && !looksTwoSided(text)) return null;
 
-  return parseTwoSidedPdf(aiConfig, text, fileName);
+  return parseTwoSidedPdf(aiConfig, text, fileName, onProgress);
 }

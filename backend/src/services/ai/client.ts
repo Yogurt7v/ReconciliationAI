@@ -82,6 +82,50 @@ interface CallResult {
   errorMessage: string | null;
 }
 
+/** Фаза события телеметрии AI-вызова */
+export type AiProgressPhase = 'attempt' | 'success' | 'retry';
+
+/**
+ * Событие телеметрии: вызывающий код может показывать его в статусе задания,
+ * чтобы пользователь видел, что модель работает, а не зависла.
+ */
+export interface AiProgressEvent {
+  phase: AiProgressPhase;
+  /** Номер текущей попытки, с 1 */
+  attempt: number;
+  maxAttempts: number;
+  /** Сколько длилась попытка, мс (только success/retry) */
+  elapsedMs?: number;
+  /** Длина полученного контента, символов (success) */
+  contentLength?: number;
+  /** Причина ошибки (retry) */
+  error?: string;
+  /** Что именно делает модель — попадает в статус задания */
+  label?: string;
+}
+
+export type AiProgressCallback = (event: AiProgressEvent) => void;
+
+function formatElapsed(ms: number): string {
+  return `${(ms / 1000).toFixed(1)} с`;
+}
+
+/** Человекочитаемое сообщение для статуса задания */
+export function aiProgressText(event: AiProgressEvent): string {
+  const prefix = event.label
+    ? `${event.label.charAt(0).toUpperCase()}${event.label.slice(1)}: `
+    : '';
+  if (event.phase === 'attempt') {
+    return event.attempt > 1
+      ? `${prefix}модель не ответила, повторная попытка ${event.attempt}/${event.maxAttempts}…`
+      : `${prefix}модель анализирует данные (может занять до минуты)…`;
+  }
+  if (event.phase === 'success') {
+    return `${prefix}готово за ${formatElapsed(event.elapsedMs ?? 0)}`;
+  }
+  return `${prefix}модель не ответила за ${formatElapsed(event.elapsedMs ?? 0)}, повтор…`;
+}
+
 async function callOnce(
   config: AiConfig,
   messages: ChatMessage[],
@@ -104,6 +148,11 @@ async function callOnce(
         messages,
         temperature: 0,
         max_tokens: 4000,
+        // Reasoning-модели тратят на внутренний разум тысячи токенов до первого
+        // символа ответа: на реальных промптах пайплайна запрос не успевает
+        // уложиться в AI_TIMEOUT_SEC и обрывается пустым. Выключаем reasoning —
+        // модели без этой настройки параметр игнорируют.
+        reasoning_effort: 'none',
       }),
     });
 
@@ -135,14 +184,25 @@ async function callOnce(
  * Запрос с ожиданием JSON-ответа. Таймаут из настроек + ровно один повтор
  * при сетевой ошибке/таймауте/5xx/429.
  *
- * Возвращает { data, debug } — данные и диагностическая информацию.
+ * Возвращает { data, debug } — данные и диагностическая информация.
+ * `options.onProgress` получает события на каждой попытке — это единственный
+ * способ показать пользователю, что модель работает, а не зависла.
  */
 export async function requestJson<T>(
   config: AiConfig,
   systemPrompt: string,
   userPayload: unknown,
-  timeoutMs = config.timeoutMs,
+  options: {
+    /** Таймаут одной попытки, мс (по умолчанию из настроек) */
+    timeoutMs?: number;
+    onProgress?: AiProgressCallback;
+    /** Метка вызывающего контекста для логов (например, «двухсторонний акт») */
+    label?: string;
+  } = {},
 ): Promise<{ data: T; debug: AiDebugInfo }> {
+  const timeoutMs = options.timeoutMs ?? config.timeoutMs;
+  const onProgress = options.onProgress;
+  const label = options.label ? ` [${options.label}]` : '';
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: JSON.stringify(userPayload) },
@@ -161,6 +221,21 @@ export async function requestJson<T>(
 
   for (let attempt = 0; attempt < PRIMARY_MAX_ATTEMPTS; attempt++) {
     debug.attempts++;
+    const attemptNo = attempt + 1;
+    const startedAt = Date.now();
+    const emit = (event: Omit<AiProgressEvent, 'attempt' | 'maxAttempts'>): void => {
+      onProgress?.({
+        ...event,
+        attempt: attemptNo,
+        maxAttempts: PRIMARY_MAX_ATTEMPTS,
+        label: options.label,
+      });
+    };
+
+    console.log(
+      `[AI]${label} попытка ${attemptNo}/${PRIMARY_MAX_ATTEMPTS}, model=${config.model}, таймаут=${timeoutMs} мс`,
+    );
+    emit({ phase: 'attempt' });
 
     try {
       const result = await callOnce(config, messages, timeoutMs);
@@ -179,6 +254,11 @@ export async function requestJson<T>(
           .replace(/\n?\s*```\s*$/i, '')
           .trim();
         const data = JSON.parse(cleaned) as T;
+        const elapsedMs = Date.now() - startedAt;
+        console.log(
+          `[AI]${label} ok за ${(elapsedMs / 1000).toFixed(1)} с, символов=${result.content.length}, попыток=${debug.attempts}`,
+        );
+        emit({ phase: 'success', elapsedMs, contentLength: result.content.length });
         return { data, debug };
       } catch {
         throw new AiUnavailableError(
@@ -194,8 +274,19 @@ export async function requestJson<T>(
       debug.errorMessage = lastError.detail ?? lastError.message;
       debug.httpStatus = lastError.status ?? debug.httpStatus;
 
+      const elapsedMs = Date.now() - startedAt;
+      console.log(
+        `[AI]${label} ошибка за ${(elapsedMs / 1000).toFixed(1)} с: ${lastError.message}` +
+          `${lastError.detail ? ` (${lastError.detail.slice(0, 200)})` : ''}`,
+      );
+
       // Невременная ошибка (400/401/404...) — повтор не поможет.
       if (!lastError.retryable) break;
+
+      // Событие «повтор» — только если повтор реально будет
+      if (attempt + 1 < PRIMARY_MAX_ATTEMPTS) {
+        emit({ phase: 'retry', elapsedMs, error: lastError.message });
+      }
 
       if (attempt === 0) {
         await new Promise((r) => setTimeout(r, 1000));

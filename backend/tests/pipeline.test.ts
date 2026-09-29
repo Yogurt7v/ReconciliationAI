@@ -5,11 +5,24 @@
  */
 
 import * as XLSX from 'xlsx';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createJob, getJob, confirmMapping, requestCancel, toStatus } from '../src/jobs/store.js';
 import { runPipeline } from '../src/jobs/pipeline.js';
 import { loadSettings } from '../src/settings.js';
+
+/**
+ * Тесты проверяют деградацию к эвристикам при недоступной модели, поэтому
+ * сеть глушим целиком: без подмены fetch пайплайн ходит в настоящую Ollama,
+ * если она запущена на машине, и тесты зависают на реальном времени модели.
+ */
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /** xlsx-буфер из массива массивов */
 function xlsxBuffer(rows: unknown[][]): Buffer {

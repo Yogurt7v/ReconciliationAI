@@ -123,6 +123,17 @@ if exist "%ROOT%\settings.txt" (
 rem Краткая инструкция для пользователя portable-сборки
 copy /Y "%ROOT%\README.md" "%OUT%\README.txt" >nul
 
+rem start.cmd - launcher, double-click to run portable build
+if not exist "%ROOT%\start.cmd" (
+  echo  [ОШИБКА] start.cmd не найден в корне репозитория
+  goto :fail
+)
+copy /Y "%ROOT%\start.cmd" "%OUT%\start.cmd" >nul
+if errorlevel 1 (
+  echo  [ОШИБКА] Не удалось скопировать start.cmd
+  goto :fail
+)
+
 rem --------------------------- 6. Встроенный Node -----------------------
 
 echo  [6/8] Встроенный Node...
@@ -158,6 +169,7 @@ if not exist "%APP%\src\index.ts" set "MISSING=!MISSING! app\src\index.ts"
 if not exist "%APP%\node_modules\tsx\dist\cli.mjs" set "MISSING=!MISSING! tsx"
 if not exist "%OUT%\runtime\node.exe" set "MISSING=!MISSING! runtime\node.exe"
 if not exist "%OUT%\settings.txt" set "MISSING=!MISSING! settings.txt"
+if not exist "%OUT%\start.cmd" set "MISSING=!MISSING! start.cmd"
 if not exist "%OUT%\frontend\dist\index.html" set "MISSING=!MISSING! frontend\dist\index.html"
 if defined MISSING (
   echo  [ОШИБКА] Не хватает файлов:!MISSING!

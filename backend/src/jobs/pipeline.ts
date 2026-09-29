@@ -5,8 +5,8 @@
  * → awaiting_confirmation? (Human-in-the-Loop) → extraction →
  * → reconciliation → analysis → done.
  *
- * Прогресс — по весам стадий; ETA — грубая оценка от суммарного размера
- * файлов. Отмена проверяется между стадиями флагом cancelRequested.
+ * Прогресс — по весам стадий, внутри стадии — по доле шага (inner 0..1).
+ * Отмена проверяется между стадиями флагом cancelRequested.
  * Все решения фиксируются в reasoningLog («Логика AI»).
  */
 
@@ -27,7 +27,8 @@ import { buildPreview, columnStats } from '../services/heuristics.js';
 import { applyMapping } from '../services/applyMapping.js';
 import { assistStructure } from '../services/ai/structureAssist.js';
 import { aiHypotheses } from '../services/ai/hypotheses.js';
-import { aiConfigFromSettings } from '../services/ai/client.js';
+import { aiConfigFromSettings, aiProgressText } from '../services/ai/client.js';
+import type { AiProgressCallback, AiProgressEvent } from '../services/ai/client.js';
 import type { Settings } from '../settings.js';
 import { reconcileSides } from '../services/reconcile.js';
 import type { ReconcileCoreResult } from '../services/reconcile.js';
@@ -49,6 +50,17 @@ const STAGE_WEIGHTS: Record<string, number> = {
 };
 const TOTAL_WEIGHT = Object.values(STAGE_WEIGHTS).reduce((a, b) => a + b, 0);
 
+/** Порядок стадий пайплайна (без терминальных) — для прогресса и степпера */
+const STAGE_ORDER = [
+  'uploaded',
+  'parsing',
+  'structure',
+  'awaiting_confirmation',
+  'extraction',
+  'reconciliation',
+  'analysis',
+] as const;
+
 class CancelledError extends Error {
   constructor() {
     super('Задание отменено пользователем');
@@ -56,28 +68,37 @@ class CancelledError extends Error {
   }
 }
 
-/** Простая честная модель прогресса: доля выполненных стадий по их весам */
-const STAGE_ORDER = ['uploaded', 'parsing', 'structure', 'awaiting_confirmation', 'extraction', 'reconciliation', 'analysis'] as const;
-
-function progressFor(stage: Job['stage']): number {
+/** Сумма весов всех стадий, предшествующих данной */
+function stageBase(stage: Job['stage']): number {
   const idx = STAGE_ORDER.indexOf(stage as (typeof STAGE_ORDER)[number]);
-  if (stage === 'done') return 1;
-  if (idx <= 0) return 0.02;
+  if (stage === 'done') return TOTAL_WEIGHT;
+  if (idx <= 0) return 0;
   let acc = 0;
   for (let i = 0; i < idx; i++) acc += STAGE_WEIGHTS[STAGE_ORDER[i]!] ?? 0;
-  const current = stage === 'awaiting_confirmation' ? 0 : (STAGE_WEIGHTS[stage] ?? 0);
-  return Math.min(0.99, (acc + current * 0.5) / TOTAL_WEIGHT);
+  return acc;
 }
 
-function updateStage(job: Job, stage: Job['stage'], message: string): void {
+/**
+ * Доли прогресса внутри стадии: inner 0 — только вошли, 1 — шаг завершён.
+ * Позволяет полоске двигаться, пока идёт долгий шаг (например, AI-вызов),
+ * а не стоять между стадиями.
+ */
+function updateStage(job: Job, stage: Job['stage'], message: string, inner = 0): void {
   job.stage = stage;
   job.message = message;
-  job.progress = progressFor(stage);
-  // ETA от суммарного размера файлов (грубо): базовые 3 с + ~1.2 с на МБ
-  const totalMb = (job.buffers.ours.length + job.buffers.partner.length) / (1024 * 1024);
-  const estimateSec = 3 + totalMb * 1.2;
-  job.etaSeconds =
-    stage === 'done' ? 0 : Math.max(1, Math.round(estimateSec * (1 - job.progress)));
+  if (stage === 'done') {
+    job.progress = 1;
+    return;
+  }
+  const base = stage === 'awaiting_confirmation' ? 0 : stageBase(stage);
+  const weight = STAGE_WEIGHTS[stage] ?? 0;
+  const clamped = Math.min(1, Math.max(0, inner));
+  job.progress = Math.min(0.99, (base + weight * clamped) / TOTAL_WEIGHT);
+}
+
+/** Сообщение текущей стадии без изменения прогресса (для телеметрии AI) */
+function updateMessage(job: Job, message: string): void {
+  job.message = message;
 }
 
 function pushStep(
@@ -122,6 +143,11 @@ async function parseSideBuffer(buffer: Buffer, fileName: string): Promise<RawSou
   return parseExcel(buffer, fileName);
 }
 
+/** Сообщение статуса по итогам сверки (короткое, для строки статуса) */
+function summarizeReconcile(result: ReconcileCoreResult): string {
+  return `Сверено: совпало пар ${result.matchedPairs.length}, расхождений сумм ${result.amountMismatches.length}`;
+}
+
 /* ------------------------------- Структура -------------------------------- */
 
 /**
@@ -131,15 +157,27 @@ async function resolveStructure(
   job: Job,
   role: SideRole,
   settings: Settings,
+  onProgress?: AiProgressCallback,
 ): Promise<void> {
   const source = job.sources[role];
   if (!source) throw new Error(`Источник ${role} не разобран`);
 
-  const { mapping, aiUsed } = await assistStructure(source.grid, settings);
-  job.mappings[role] = mapping;
+  const label = role === 'ours' ? 'наш файл' : 'файл контрагента';
+  // Доли прогресса внутри стадии structure: наши — первая половина, вторая — вторая
+  const innerStart = role === 'ours' ? 0.1 : 0.55;
+  const innerDone = role === 'ours' ? 0.45 : 0.95;
 
-  const label = role === 'ours' ? 'НАШ ФАЙЛ' : 'ФАЙЛ КОНТРАГЕНТА';
-  console.log(`\n🔍 STRUCTURE | ${label}`, JSON.stringify({
+  updateStage(job, 'structure', `Определение структуры: ${label}…`, innerStart);
+  const { mapping, aiUsed } = await assistStructure(source.grid, settings, onProgress);
+  job.mappings[role] = mapping;
+  updateStage(
+    job,
+    'structure',
+    `Структура «${label}»: ${mapping.source}, уверенность ${Math.round(mapping.confidence * 100)}%`,
+    innerDone,
+  );
+
+  console.log(`\n🔍 STRUCTURE | ${role === 'ours' ? 'НАШ ФАЙЛ' : 'ФАЙЛ КОНТРАГЕНТА'}`, JSON.stringify({
     source: mapping.source,
     confidence: mapping.confidence,
     headerRow: mapping.headerRowIndex,
@@ -194,8 +232,9 @@ async function ensureConfirmedStructure(
   job: Job,
   role: SideRole,
   settings: Settings,
+  onProgress?: AiProgressCallback,
 ): Promise<void> {
-  await resolveStructure(job, role, settings);
+  await resolveStructure(job, role, settings, onProgress);
   while (
     !job.cancelRequested &&
     job.pendingConfirmation !== null &&
@@ -247,7 +286,7 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
   try {
     /* ------------------------------ parsing ----------------------------- */
     checkCancelled(job);
-    updateStage(job, 'parsing', 'Разбор файлов…');
+    updateStage(job, 'parsing', 'Чтение файлов…', 0.05);
     const [oursSource, partnerSource] = await Promise.all([
       parseSideBuffer(job.buffers.ours, job.files.ours),
       parseSideBuffer(job.buffers.partner, job.files.partner),
@@ -267,10 +306,20 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
             : 'PDF с текстовым слоем';
       return `${kindLabel}, страниц: ${s.pages ?? '—'}, строк сетки: ${s.grid.length}`;
     };
+    updateStage(
+      job,
+      'parsing',
+      `Файлы разобраны. Наш: ${describe(oursSource)}. Контрагент: ${describe(partnerSource)}.`,
+      0.5,
+    );
     pushStep(job, 'parsing', 'Файлы разобраны', `Наш файл: ${describe(oursSource)}. Контрагент: ${describe(partnerSource)}.`);
     if (oursSource.needsOcr || partnerSource.needsOcr) {
       pushStep(job, 'parsing', 'Обнаружен скан', 'Один из файлов распознан через OCR — возможны неточности распознавания.');
     }
+
+    // Телеметрия AI-вызовов: модель может думать десятки секунд — показываем
+    // это в статусе, иначе пользователь решает, что процесс завис.
+    const aiEvent = (ev: AiProgressEvent): void => updateMessage(job, aiProgressText(ev));
 
     /* --------------------- двухсторонний PDF (AI) ----------------------- */
     // Двусторонний акт: пользователь галочкой указал, что файл контрагента
@@ -280,11 +329,13 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
       const partnerIsTextPdf = partnerSource.kind === 'pdf-text' && !partnerSource.needsOcr;
       if (partnerIsTextPdf) {
         const aiConfig = aiConfigFromSettings(settings);
+        updateStage(job, 'parsing', 'Распознавание двухстороннего акта через AI…', 0.7);
         const twoSided = await detectTwoSidedPdf(
           partnerSource,
           job.files.partner,
           aiConfig,
           true,
+          aiEvent,
         );
 
         if (twoSided) {
@@ -292,6 +343,12 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
           // party_2 (partner в structuredParse) = правая сторона = наши
           // Нам нужна только сторона партнёра (party_1 → twoSided.ours)
           partnerParsed = twoSided.ours;
+          updateStage(
+            job,
+            'parsing',
+            `Двусторонний акт контрагента распознан: ${partnerParsed.rows.length} строк`,
+            0.95,
+          );
 
           console.log(`\n📄 TWO-SIDED PDF | ФАЙЛ КОНТРАГЕНТА | распознано через AI`);
           console.log(`  сторона контрагента: ${partnerParsed.rows.length} строк`);
@@ -314,14 +371,22 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
       const oursIsTextPdf = oursSource.kind === 'pdf-text' && !oursSource.needsOcr;
       if (oursIsTextPdf) {
         const aiConfig = aiConfigFromSettings(settings);
+        updateStage(job, 'parsing', 'Распознавание акта сверки через AI…', 0.7);
         const twoSided = await detectTwoSidedPdf(
           oursSource,
           job.files.ours,
           aiConfig,
           job.twoSidedRequested,
+          aiEvent,
         );
 
         if (twoSided) {
+          updateStage(
+            job,
+            'parsing',
+            `Акт сверки распознан через AI: ${twoSided.ours.rows.length} + ${twoSided.partner.rows.length} строк`,
+            0.95,
+          );
           job.sources.ours = {
             grid: [],
             kind: 'ai-structured',
@@ -362,11 +427,12 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
     if (oursParsed && partnerParsed) {
       // Обе стороны уже извлечены — переходим сразу к reconciliation
       checkCancelled(job);
-      updateStage(job, 'reconciliation', 'Сопоставление документов…');
+      updateStage(job, 'reconciliation', 'Сопоставление документов…', 0.2);
       console.log(`\n⚖️ RECONCILE | наш файл: ${oursParsed.rows.length} строк, контрагент: ${partnerParsed.rows.length} строк`);
       console.log(`  наши первые 5:`, oursParsed.rows.slice(0, 5).map(r => r.docNumber));
       console.log(`  контрагент первые 5:`, partnerParsed.rows.slice(0, 5).map(r => r.docNumber));
       coreResult = reconcileSides(oursParsed, partnerParsed);
+      updateStage(job, 'reconciliation', summarizeReconcile(coreResult), 0.9);
       pushStep(
         job,
         'reconciliation',
@@ -376,7 +442,7 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
 
       // Анализ и отчёт
       checkCancelled(job);
-      updateStage(job, 'analysis', 'Формирование отчёта…');
+      updateStage(job, 'analysis', 'Формирование отчёта…', 0.4);
       const report = buildReport({
         jobId: job.id,
         ours: oursParsed,
@@ -393,30 +459,39 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
 
     /* ----------------------------- structure ---------------------------- */
     checkCancelled(job);
-    updateStage(job, 'structure', 'Определение структуры таблиц…');
+    updateStage(job, 'structure', 'Определение структуры таблиц…', 0.02);
 
     // Стороны обрабатываются последовательно: каждая может запросить подтверждение
-    await ensureConfirmedStructure(job, 'ours', settings);
+    await ensureConfirmedStructure(job, 'ours', settings, aiEvent);
     checkCancelled(job);
     if (!partnerParsed) {
-      await ensureConfirmedStructure(job, 'partner', settings);
+      await ensureConfirmedStructure(job, 'partner', settings, aiEvent);
       checkCancelled(job);
     }
 
     /* ----------------------------- extraction --------------------------- */
-    updateStage(job, 'extraction', 'Извлечение строк документов…');
+    updateStage(job, 'extraction', 'Извлечение строк: наш файл…', 0.1);
     oursParsed = extractSide(job, 'ours');
+    updateStage(job, 'extraction', `Извлечено строк (наш файл): ${oursParsed.rows.length}`, 0.5);
     if (!partnerParsed) {
+      updateStage(job, 'extraction', 'Извлечение строк: файл контрагента…', 0.6);
       partnerParsed = extractSide(job, 'partner');
+      updateStage(
+        job,
+        'extraction',
+        `Извлечено строк: наш файл ${oursParsed.rows.length}, контрагент ${partnerParsed.rows.length}`,
+        0.95,
+      );
     }
 
     /* --------------------------- reconciliation ------------------------- */
     checkCancelled(job);
-    updateStage(job, 'reconciliation', 'Сопоставление документов…');
+    updateStage(job, 'reconciliation', 'Сопоставление документов…', 0.2);
     console.log(`\n⚖️ RECONCILE | наш файл: ${oursParsed.rows.length} строк, контрагент: ${partnerParsed.rows.length} строк`);
     console.log(`  наши первые 5:`, oursParsed.rows.slice(0, 5).map(r => r.docNumber));
     console.log(`  контрагент первые 5:`, partnerParsed.rows.slice(0, 5).map(r => r.docNumber));
     coreResult = reconcileSides(oursParsed, partnerParsed);
+    updateStage(job, 'reconciliation', summarizeReconcile(coreResult), 0.9);
     pushStep(
       job,
       'reconciliation',
@@ -426,8 +501,9 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
 
     /* ------------------------------ analysis ---------------------------- */
     checkCancelled(job);
-    updateStage(job, 'analysis', 'Формирование отчёта и гипотез…');
+    updateStage(job, 'analysis', 'Формирование отчёта…', 0.2);
     const config = aiConfigFromSettings(settings);
+    updateStage(job, 'analysis', 'AI анализирует расхождения и готовит гипотезы…', 0.5);
     const hypothesesAi = await aiHypotheses(config, {
       summary: {
         ourTotal: oursParsed.rows.length,
@@ -446,8 +522,9 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
         onlyOurs: coreResult.onlyOurs,
         onlyPartner: coreResult.onlyPartner,
       },
-    });
+    }, aiEvent);
 
+    updateStage(job, 'analysis', 'Генерация итогового отчёта…', 0.85);
     const report = buildReport({
       jobId: job.id,
       ours: oursParsed,
@@ -465,13 +542,11 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
       job.stage = 'cancelled';
       job.message = 'Задание отменено';
       job.error = null;
-      job.etaSeconds = null;
       return;
     }
     job.stage = 'failed';
     job.error = err instanceof Error ? err.message : String(err);
     job.message = 'Ошибка обработки';
-    job.etaSeconds = null;
     pushStep(job, 'failed', 'Задание завершилось ошибкой', job.error);
   } finally {
     // Освобождаем буферы — они больше не нужны после формирования отчёта

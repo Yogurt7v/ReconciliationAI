@@ -165,6 +165,86 @@
   transition: width var(--duration-slow) var(--ease-out);
 }
 
+/* Долгий шаг (AI-вызов): полоска подсвечивается, чтобы было видно, что идёт работа */
+.progress.is-idle .progress-bar {
+  animation: progress-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.job-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Смена статуса — короткая вспышка текста, чтобы заметить обновление */
+.job-message {
+  animation: status-in var(--duration-normal) var(--ease-out);
+}
+
+@keyframes status-in {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+/* --------------------------- Мини-степпер стадий -------------------------- */
+
+.stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+}
+
+.stepper-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-muted);
+}
+
+.stepper-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--accent-ink);
+}
+
+.stepper-item.is-pending .stepper-mark {
+  background: transparent;
+}
+
+.stepper-item.is-current {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.stepper-item.is-current .stepper-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.stepper-item.is-done {
+  color: var(--ink-secondary);
+}
+
+.stepper-item.is-done .stepper-mark {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
 .job-log {
   margin: var(--sp-3) 0 0;
   padding-left: var(--sp-5);

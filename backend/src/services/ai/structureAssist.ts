@@ -19,6 +19,7 @@ import { cellToString } from '@recon/shared';
 import { analyzeAndMap } from '../heuristics.js';
 import type { Settings } from '../../settings.js';
 import { AiUnavailableError, aiConfigFromSettings, requestJson } from './client.js';
+import type { AiProgressCallback } from './client.js';
 
 interface AiStructureResponse {
   headerRowIndex?: number;
@@ -112,6 +113,7 @@ function validateAiResponse(
 export async function assistStructure(
   grid: Grid,
   settings: Settings,
+  onProgress?: AiProgressCallback,
 ): Promise<StructureAssistResult> {
   const { analysis, mapping } = analyzeAndMap(grid);
   const config = aiConfigFromSettings(settings);
@@ -128,6 +130,7 @@ export async function assistStructure(
       config,
       SYSTEM_PROMPT,
       { rowCount: Math.min(grid.length, AI_STRUCTURE_SAMPLE_ROWS), totalColumns: colCount, rows: sample },
+      { onProgress, label: 'структура таблицы' },
     );
 
     const parsed = validateAiResponse(raw, Math.min(grid.length, AI_STRUCTURE_SAMPLE_ROWS), colCount);

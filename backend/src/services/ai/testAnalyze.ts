@@ -309,6 +309,7 @@ export async function testAnalyze(grid: Grid, config: AiConfig): Promise<TestAna
       totalColumns: colCount,
       rows: sampleRows,
     },
+    { label: 'быстрый разбор' },
   );
 
   const { document, warnings } = buildAndValidate(raw);

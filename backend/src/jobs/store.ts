@@ -24,7 +24,6 @@ export interface Job {
   id: string;
   stage: JobStage;
   progress: number; // 0..1
-  etaSeconds: number | null;
   message: string;
   error: string | null;
   cancelRequested: boolean;
@@ -70,7 +69,6 @@ export function createJob(
     id: randomUUID(),
     stage: 'uploaded',
     progress: 0.02,
-    etaSeconds: null,
     message: 'Файлы получены',
     error: null,
     cancelRequested: false,
@@ -92,8 +90,7 @@ export function createJob(
   const ttlTimer = setTimeout(() => {
     if (!isTerminal(job)) {
       job.stage = 'cancelled';
-      job.message = 'Задание отменено по таймауту';
-      job.etaSeconds = null;
+      job.message = 'Авто-отмена: задание не завершено вовремя';
       jobs.delete(job.id);
     }
   }, JOB_TTL_MS);
@@ -111,7 +108,6 @@ export function toStatus(job: Job): JobStatus {
     id: job.id,
     stage: job.stage,
     progress: job.progress,
-    etaSeconds: job.etaSeconds,
     message: job.message,
     error: job.error,
     pendingConfirmation: job.pendingConfirmation,

@@ -16,7 +16,7 @@ import type {
   SummaryCounts,
 } from '@recon/shared';
 
-import { requestJson, type AiConfig } from './client.js';
+import { requestJson, type AiConfig, type AiProgressCallback } from './client.js';
 
 /** Контекст, на котором строятся гипотезы (шаблонные и AI) */
 export interface HypothesisContext {
@@ -146,6 +146,7 @@ const SYSTEM_PROMPT = `Ты бухгалтер-аналитик. Тебе даю
 export async function aiHypotheses(
   config: AiConfig,
   ctx: HypothesisContext,
+  onProgress?: AiProgressCallback,
 ): Promise<Hypothesis[] | null> {
   try {
     const { data: raw } = await requestJson<AiHypothesesResponse>(
@@ -159,6 +160,7 @@ export async function aiHypotheses(
         onlyPartner: takeSamples(ctx.samples.onlyPartner),
         extractionAssumptions: ctx.assumptions,
       },
+      { onProgress, label: 'гипотезы' },
     );
 
     if (!Array.isArray(raw.hypotheses)) return null;

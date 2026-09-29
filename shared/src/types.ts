@@ -267,7 +267,6 @@ export interface JobStatus {
   id: string;
   stage: JobStage;
   progress: number;
-  etaSeconds: number | null;
   message: string;
   error: string | null;
   pendingConfirmation: PendingConfirmation | null;

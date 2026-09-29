@@ -282,6 +282,7 @@ export async function generateAiAnalysis(
     config,
     ANALYSIS_PROMPT,
     payload,
+    { label: 'анализ расхождений' },
   );
 
   let text = data.summary || 'Анализ недоступен.';

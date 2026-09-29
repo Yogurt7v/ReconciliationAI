@@ -46,6 +46,10 @@ export default function JobScreen({ runtime }: Props) {
 
   const jobIdRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startedAtRef = useRef<number | null>(null);
+  /** Когда прогресс последний раз менялся — для пульсации «ещё думает» */
+  const lastChangeRef = useRef<number>(Date.now());
+  const progressRef = useRef<number>(-1);
   const oursInputRef = useRef<HTMLInputElement>(null);
   const partnerInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +80,10 @@ export default function JobScreen({ runtime }: Props) {
         return;
       }
 
+      if (next.progress !== progressRef.current) {
+        progressRef.current = next.progress;
+        lastChangeRef.current = Date.now();
+      }
       setStatus(next);
       if (PAUSED_STAGES.includes(next.stage)) return; // ждём пользователя или конца
       timerRef.current = setTimeout(tick, POLL_MS);
@@ -100,6 +108,9 @@ export default function JobScreen({ runtime }: Props) {
     try {
       const created = await api.createJob(ours, partner, twoSided);
       jobIdRef.current = created.id;
+      startedAtRef.current = Date.now();
+      lastChangeRef.current = Date.now();
+      progressRef.current = created.progress;
       setStatus(created);
       poll(created.id);
     } catch (err) {
@@ -142,6 +153,9 @@ export default function JobScreen({ runtime }: Props) {
   const reset = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     jobIdRef.current = null;
+    startedAtRef.current = null;
+    lastChangeRef.current = Date.now();
+    progressRef.current = -1;
     setStatus(null);
     setFatal(null);
   }, []);
@@ -149,6 +163,22 @@ export default function JobScreen({ runtime }: Props) {
   /* ---------------------------------- Вид ---------------------------------- */
 
   const running = status !== null && !PAUSED_STAGES.includes(status.stage);
+
+  /* -------------------- Таймер «прошло» и пульсация ----------------------- */
+
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  const elapsedLabel =
+    running && startedAtRef.current !== null
+      ? `прошло ${formatDuration((now - startedAtRef.current) / 1000)}`
+      : null;
+  // Прогресс не двигался 4+ с → показываем, что идёт долгий шаг (AI-вызов)
+  const progressIdle = running && now - lastChangeRef.current >= 4000;
 
   return (
     <div className="card animate-in">
@@ -213,16 +243,16 @@ export default function JobScreen({ runtime }: Props) {
         <div className="job-status">
           <div className="job-status-head">
             <strong>{STAGE_LABELS[status.stage]}</strong>
-            {status.etaSeconds !== null && (
-              <span className="muted">≈ {formatEta(status.etaSeconds)}</span>
-            )}
+            {elapsedLabel !== null && <span className="muted job-elapsed">{elapsedLabel}</span>}
           </div>
 
-          <div className="progress">
+          <Stepper stage={status.stage} />
+
+          <div className={`progress${progressIdle ? ' is-idle' : ''}`}>
             <div className="progress-bar" style={{ width: `${Math.round(status.progress * 100)}%` }} />
           </div>
 
-          <p className="muted">{status.message}</p>
+          <p className="muted job-message" key={status.message}>{status.message}</p>
 
           {status.error && <div className="banner banner-error">{status.error}</div>}
           {fatal && <div className="banner banner-error">{fatal}</div>}
@@ -378,8 +408,49 @@ function ReportLinks({ id }: { id: string }) {
   );
 }
 
-function formatEta(seconds: number): string {
-  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} с`;
-  const m = Math.round(seconds / 60);
-  return `${m} мин`;
+function formatDuration(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec));
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (m === 0) return `${rest} с`;
+  if (m < 60) return `${m} мин ${rest} с`;
+  const h = Math.floor(m / 60);
+  return `${h} ч ${m % 60} мин`;
+}
+
+/** Шаги пайплайна для мини-степпера (без служебных и терминальных стадий) */
+const STEPPER_STAGES: JobStage[] = [
+  'parsing',
+  'structure',
+  'extraction',
+  'reconciliation',
+  'analysis',
+];
+
+function Stepper({ stage }: { stage: JobStage }) {
+  const doneAll = stage === 'done';
+  const stopped = stage === 'failed' || stage === 'cancelled';
+  // Подтверждение структуры происходит внутри стадии structure → показываем её
+  const currentIdx = doneAll
+    ? STEPPER_STAGES.length
+    : stopped
+      ? -1
+      : stage === 'uploaded'
+        ? 0
+        : stage === 'awaiting_confirmation'
+          ? 1
+          : STEPPER_STAGES.indexOf(stage);
+  return (
+    <ol className="stepper" aria-label="Ход обработки">
+      {STEPPER_STAGES.map((s, i) => {
+        const state = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'pending';
+        return (
+          <li key={s} className={`stepper-item is-${state}`}>
+            <span className="stepper-mark">{state === 'done' ? '✓' : ''}</span>
+            <span className="stepper-label">{STAGE_LABELS[s]}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }

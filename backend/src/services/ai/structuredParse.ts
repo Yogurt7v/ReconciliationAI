@@ -16,6 +16,7 @@ import {
 import type { AiStructuredResult, ParsedRow, ParsedSide } from '@recon/shared';
 
 import { AiUnavailableError, type AiConfig, requestJson } from './client.js';
+import type { AiProgressCallback } from './client.js';
 
 /* -------------------------------------------------------------------------- */
 /*                                  Prompt                                    */
@@ -278,6 +279,7 @@ export async function parseTwoSidedPdf(
   config: AiConfig,
   pdfText: string,
   fileName: string,
+  onProgress?: AiProgressCallback,
 ): Promise<AiStructuredResult | null> {
   if (!pdfText.trim()) return null;
 
@@ -286,7 +288,7 @@ export async function parseTwoSidedPdf(
       config,
       SYSTEM_PROMPT,
       { text: pdfText },
-      60_000, // двухсторонний акт может быть длинным
+      { onProgress, label: 'двухсторонний акт' },
     );
 
     const validation = validateStructuredResponse(raw);
