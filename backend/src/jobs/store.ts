@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  COMBINABLE_FIELD_PAIR,
   JOB_TTL_MS,
   MAX_ACTIVE_JOBS,
   type ColumnMapping,
@@ -139,8 +140,22 @@ export function confirmMapping(jobId: string, payload: ConfirmPayload): boolean 
   if (payload.dataStartRowIndex <= payload.headerRowIndex) return false;
   const colValues = Object.values(payload.columns);
   if (colValues.some((v) => v !== null && (!Number.isInteger(v) || v < 0))) return false;
-  const nonNull = colValues.filter((v): v is number => v !== null);
-  if (new Set(nonNull).size !== nonNull.length) return false;
+
+  // Одна колонка может обслуживать только пару «номер + дата» из объединённого
+  // заголовка акта — именно такую раскладку предлагает эвристика. Любые другие
+  // совпадения означают, что два разных поля читают одно и то же, и это ошибка.
+  const [combinedA, combinedB] = COMBINABLE_FIELD_PAIR;
+  const allowedDuplicate =
+    payload.columns[combinedA] !== null &&
+    payload.columns[combinedA] === payload.columns[combinedB]
+      ? payload.columns[combinedA]
+      : null;
+  const seen = new Set<number>();
+  for (const v of colValues) {
+    if (v === null || v === allowedDuplicate) continue;
+    if (seen.has(v)) return false;
+    seen.add(v);
+  }
 
   const role = job.pendingConfirmation.side;
   const previous = job.mappings[role];

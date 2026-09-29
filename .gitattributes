@@ -1,0 +1,19 @@
+# Нормализация переводов строк.
+# По умолчанию репозиторий оперирует LF, чтобы diff'ы не «дрожали»
+# на разных машинах. Исключения — файлы, которые Windows читает как есть.
+
+* text=auto eol=lf
+
+# Пакетные файлы Windows: cmd.exe корректно понимает только CRLF.
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# Бинарные файлы, которые попадают в переносимую сборку.
+*.png   binary
+*.ico   binary
+*.jpg   binary
+*.jpeg  binary
+*.xlsx  binary
+*.pdf   binary
+*.traineddata binary

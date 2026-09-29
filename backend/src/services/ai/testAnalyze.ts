@@ -294,10 +294,6 @@ function buildAndValidate(raw: AiDocumentResponse): { document: DocumentData; wa
  * Главная функция: отправляет сетку в AI и извлекает данные документа.
  */
 export async function testAnalyze(grid: Grid, config: AiConfig): Promise<TestAnalyzeResult> {
-  if (!config.apiKey) {
-    throw new AiUnavailableError('OPENROUTER_API_KEY не задан — тестовый анализ недоступен.');
-  }
-
   if (grid.length === 0) {
     throw new AiUnavailableError('Таблица пуста — нечего анализировать.');
   }

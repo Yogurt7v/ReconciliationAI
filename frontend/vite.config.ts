@@ -6,12 +6,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      // Проксируем API на локальный backend; порт можно переопределить
-      // (на macOS порт 5000 часто занят AirPlay Receiver)
+      // Прокси только для режима разработки. В переносимой сборке фронт
+      // раздаёт сам backend из того же origin — прокси не нужен.
+      // Порт по умолчанию совпадает с APP_PORT в settings.example.txt;
+      // если меняете APP_PORT, задайте BACKEND_PORT здесь же.
       '/api': {
-        // BACKEND_URL — для all-in-one образа (127.0.0.1 внутри контейнера);
-        // BACKEND_PORT — локальная разработка; по умолчанию 5057.
-        target: process.env.BACKEND_URL ?? `http://localhost:${process.env.BACKEND_PORT ?? '5057'}`,
+        target: `http://localhost:${process.env.BACKEND_PORT ?? '8080'}`,
         changeOrigin: true,
       },
     },

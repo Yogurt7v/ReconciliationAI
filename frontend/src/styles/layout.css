@@ -72,3 +72,187 @@
     align-items: stretch;
   }
 }
+
+.app-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+}
+
+.app-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+}
+
+.app-subtitle {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--text-sm);
+}
+
+/* ------------------------------ Переключатель ----------------------------- */
+
+.mode-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: var(--sp-5);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.mode-switch-btn {
+  padding: var(--sp-2) var(--sp-5);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-muted);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-md) - 3px);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.mode-switch-btn:hover {
+  color: var(--ink);
+}
+
+.mode-switch-btn.is-active {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.mode-switch-btn:focus-visible {
+  outline: 2px solid var(--line-focus);
+  outline-offset: 1px;
+}
+
+/* --------------------------- Статус задания ------------------------------ */
+
+.job-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.job-status-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  font-size: var(--text-sm);
+}
+
+.progress {
+  height: 6px;
+  overflow: hidden;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+
+.job-log {
+  margin: var(--sp-3) 0 0;
+  padding-left: var(--sp-5);
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.job-log li {
+  margin-bottom: var(--sp-1);
+}
+
+.job-log-stage {
+  margin-right: var(--sp-2);
+  font-weight: var(--weight-semibold);
+  color: var(--accent);
+}
+
+/* --------------------------- Подтверждение структуры ---------------------- */
+
+.card--flat {
+  margin-bottom: var(--sp-4);
+  background: var(--surface-raised);
+  box-shadow: none;
+  border: 1px solid var(--line);
+}
+
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.mapping-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.mapping-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.mapping-required {
+  margin-left: 2px;
+  color: var(--bad);
+}
+
+.mapping-select {
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.mapping-select:focus-visible {
+  outline: 2px solid var(--line-focus);
+  outline-offset: 1px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* --------------------------------- Отчёты --------------------------------- */
+
+.banner-success {
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-border);
+  color: var(--ink);
+}
+
+.report-links {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}

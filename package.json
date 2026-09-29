@@ -2,9 +2,9 @@
   "name": "reconciliation-ai",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-агент для сверки актов сверки с контрагентами (MVP)",
+  "description": "Сверка актов сверки на локальной модели Ollama (portable Windows)",
   "scripts": {
-    "dev": "PORT=5057 pnpm -r --parallel --stream dev",
+    "dev": "pnpm -r --parallel --stream dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",

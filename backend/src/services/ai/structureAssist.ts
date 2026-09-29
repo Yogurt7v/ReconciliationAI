@@ -1,5 +1,5 @@
 /**
- * AI-ассистент определения структуры таблицы (OpenRouter).
+ * AI-ассистент определения структуры таблицы (локальная модель Ollama).
  *
  * Стратегия:
  *  1. Всегда считаем эвристику (analyzeAndMap) — это база и запасной путь.
@@ -8,16 +8,17 @@
  *     объясняет решение по-русски.
  *  3. Сливаем: колонки модели приоритетнее, пустые значения добираем
  *     из эвристики; source='ai+heuristic'.
- *  4. Любая ошибка/отсутствие ключа → деградация к чистой эвристике,
+ *  4. Любая ошибка модели → деградация к чистой эвристике,
  *     причина фиксируется в reasoning (попадёт в «Логику AI»).
  */
 
-import { AI_STRUCTURE_SAMPLE_ROWS } from '@recon/shared';
+import { AI_STRUCTURE_SAMPLE_ROWS, missingRequiredFields } from '@recon/shared';
 import type { ColumnMapping, Grid, MappingFieldKey } from '@recon/shared';
 
 import { cellToString } from '@recon/shared';
 import { analyzeAndMap } from '../heuristics.js';
-import { AiUnavailableError, aiConfigFromEnv, requestJson } from './client.js';
+import type { Settings } from '../../settings.js';
+import { AiUnavailableError, aiConfigFromSettings, requestJson } from './client.js';
 
 interface AiStructureResponse {
   headerRowIndex?: number;
@@ -108,16 +109,12 @@ function validateAiResponse(
 /**
  * Главная функция: эвристика + AI → итоговый маппинг структуры.
  */
-export async function assistStructure(grid: Grid): Promise<StructureAssistResult> {
+export async function assistStructure(
+  grid: Grid,
+  settings: Settings,
+): Promise<StructureAssistResult> {
   const { analysis, mapping } = analyzeAndMap(grid);
-  const config = aiConfigFromEnv();
-
-  if (!config.apiKey) {
-    return {
-      mapping: degrade(mapping, 'OPENROUTER_API_KEY не задан: структура определена эвристиками.'),
-      aiUsed: false,
-    };
-  }
+  const config = aiConfigFromSettings(settings);
 
   if (grid.length === 0) {
     return { mapping, aiUsed: false };
@@ -153,9 +150,7 @@ export async function assistStructure(grid: Grid): Promise<StructureAssistResult
     }
 
     let confidence = Math.max(parsed.confidence, mapping.confidence);
-    const missing = (['docNumber', 'docDate', 'amount'] as MappingFieldKey[]).filter(
-      (f) => columns[f] === null,
-    );
+    const missing = missingRequiredFields(columns);
     if (missing.length > 0) {
       confidence = Math.min(confidence, 0.5);
       parsed.reasoning.push(

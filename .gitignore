@@ -1,16 +1,26 @@
 node_modules/
 .pnpm-store/
 dist/
+dist-portable/
 *.tsbuildinfo
-.env
+
+# Настройки приложения: settings.example.txt — шаблон, settings.txt — живая копия
+settings.txt
+
+# Артефакты выполнения
 uploads/
 reports/
+logs/
 .tessdata/
+
+# Тестовые артефакты и семплы
 **/samples/*.xlsx
 **/samples/*.pdf
 **/samples/out/
+
 *.log
 .DS_Store
-AGENTS.md
-test/*
 .opencode
+
+# Личные документы для ручной проверки — не коммитим, в них данные контрагентов
+test/*

@@ -11,6 +11,20 @@ import type {
   ReconciliationReport,
 } from '@recon/shared';
 
+/** Человекочитаемый статус проверки баланса */
+function balanceStatusLabel(status: ReconciliationReport['balanceChecks'][number]['status']): string {
+  switch (status) {
+    case 'match':
+      return 'совпадает';
+    case 'mirrored':
+      return 'зеркально (одна картина с двух сторон)';
+    case 'mismatch':
+      return 'не совпадает';
+    default:
+      return 'нет данных';
+  }
+}
+
 function esc(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -133,9 +147,7 @@ export function buildHtmlReport(report: ReconciliationReport): string {
       (b) =>
         `<tr><td>${esc(b.label)}</td><td class="num">${money(b.ours)}</td><td class="num">${money(
           b.partner,
-        )}</td><td>${
-          b.status === 'match' ? 'совпадает' : b.status === 'mismatch' ? 'не совпадает' : 'нет данных'
-        }</td></tr>`,
+        )}</td><td>${esc(balanceStatusLabel(b.status))}</td></tr>`,
     )
     .join('');
 

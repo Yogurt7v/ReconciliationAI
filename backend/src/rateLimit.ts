@@ -4,7 +4,19 @@ import { RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } from '@recon/shared';
 
 const hits = new Map<string, { count: number; resetAt: number }>();
 
+/**
+ * Ограничитель частоты запросов.
+ *
+ * Считаются только POST-запросы к /api: они запускают разбор файлов, вызов
+ * модели или пайплайн сверки — то есть реально нагружают CPU и память.
+ *
+ * GET (статика, /api/health, опрос статуса задания) и HEAD/OPTIONS не
+ * ограничиваются: они обслуживаются из памяти, а опрос статуса фронтенн
+ * делает раз в ~1.2 с на протяжении всего задания и иначе упёрся бы в лимит.
+ */
 export async function rateLimiter(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (req.method !== 'POST' || !req.url.startsWith('/api/')) return;
+
   const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const now = Date.now();
   const entry = hits.get(ip);

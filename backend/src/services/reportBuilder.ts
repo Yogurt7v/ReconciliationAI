@@ -58,6 +58,28 @@ function compareBalances(
   return { key, label: BALANCE_LABELS[key], ours, partner, status };
 }
 
+/**
+ * Акт сверки двусторонний: одна и та же операция у нас может стоять в дебете,
+ * а у контрагента — в кредите. Если обороты совпадают «крест-накрест», это не
+ * расхождение, а зеркальное отражение одной картины, и называть его
+ * расхождением нельзя — иначе отчёт кричит «обороты не сходятся» на акте,
+ * где все суммы сошлись.
+ */
+function isMirroredTurnover(ours: ParsedSide, partner: ParsedSide): boolean {
+  const { turnoverDebit: ourDebit, turnoverCredit: ourCredit } = ours;
+  const { turnoverDebit: theirDebit, turnoverCredit: theirCredit } = partner;
+  if (ourDebit === null || ourCredit === null || theirDebit === null || theirCredit === null) {
+    return false;
+  }
+  return (
+    new Decimal(ourDebit).equals(new Decimal(theirCredit)) &&
+    new Decimal(ourCredit).equals(new Decimal(theirDebit)) &&
+    // Совпадение «как есть» — это match, а не зеркало
+    !(new Decimal(ourDebit).equals(new Decimal(theirDebit)) &&
+      new Decimal(ourCredit).equals(new Decimal(theirCredit)))
+  );
+}
+
 function sumAmounts(values: Array<string | null>): string {
   return values
     .reduce(
@@ -143,6 +165,18 @@ export function buildReport(input: ReportBuildInput): ReconciliationReport {
     compareBalances('turnoverCredit', ours.turnoverCredit, partner.turnoverCredit),
   ];
 
+  if (isMirroredTurnover(ours, partner)) {
+    for (const check of balanceChecks) {
+      if (check.status === 'mismatch') check.status = 'mirrored';
+    }
+  }
+
+  // «missing» — это когда сравнивать нечего. Если данные отсутствуют у обеих
+  // сторон, расхождения нет; если только у одной — это уже повод смотреть.
+  const balanceProblems = balanceChecks.filter(
+    (b) => b.status === 'mismatch' || (b.status === 'missing' && b.ours !== b.partner),
+  );
+
   const summary: SummaryCounts = {
     ourTotal: ours.rows.length,
     partnerTotal: partner.rows.length,
@@ -151,13 +185,13 @@ export function buildReport(input: ReportBuildInput): ReconciliationReport {
     onlyPartner: core.onlyPartner.length,
     amountMismatches: core.amountMismatches.length,
     dateMismatches: core.dateMismatches.length,
-    balanceIssues: balanceChecks.filter((b) => b.status !== 'match').length,
+    balanceIssues: balanceProblems.length,
   };
 
   // Гипотезы: правила всегда, модель — при наличии
   const ctx: HypothesisContext = {
     summary,
-    balanceIssues: balanceChecks.filter((b) => b.status !== 'match'),
+    balanceIssues: balanceProblems,
     assumptions: [...ours.assumptions, ...partner.assumptions],
     samples: {
       amountMismatches: core.amountMismatches,

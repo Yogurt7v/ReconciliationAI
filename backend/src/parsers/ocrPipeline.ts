@@ -133,6 +133,21 @@ async function getOcrWorker() {
 }
 
 /**
+ * Закрыть воркер OCR. В сервере он живёт до конца процесса, а в одноразовых
+ * скриптах (smoke) удерживает event loop и не даёт процессу завершиться.
+ */
+export async function shutdownOcrWorker(): Promise<void> {
+  const pending = workerPromise;
+  workerPromise = null;
+  if (!pending) return;
+  try {
+    await (await pending).terminate();
+  } catch {
+    // Воркер мог не доехать до состояния готовности — закрывать нечего.
+  }
+}
+
+/**
  * Прогрев OCR: гарантирует наличие rus+eng traineddata в кеше (скачивает,
  * если их нет) и закрывает временный воркер. Вызывается скриптом
  * scripts/prepare-ocr.ts и перед OCR-e2e тестами.

@@ -41,6 +41,39 @@ export const MAPPING_FIELD_LABELS: Record<MappingFieldKey, string> = {
 export const REQUIRED_FIELDS: MappingFieldKey[] = ['docNumber', 'docDate', 'amount'];
 
 /**
+ * Поля, из которых берётся сумма строки. Отдельная колонка «Сумма» не
+ * обязательна: applyMapping берёт первую непустую (amount → debit → credit),
+ * поэтому акты с колонками «Дебет»/«Кредит» — типичный вид акта сверки —
+ * разбираются без вмешательства пользователя.
+ */
+export const AMOUNT_SOURCE_FIELDS: MappingFieldKey[] = ['amount', 'debit', 'credit'];
+
+/**
+ * Пара полей, которой законно можно указать одну и ту же колонку: в актах
+ * сверки «Дата документа» и «Номер документа» часто объединены в один
+ * заголовок («Дата Документ»), а номер лежит в скобках. Такую раскладку
+ * строит эвристика (heuristics.ts), и разбирает normalizeDocNumber.
+ */
+export const COMBINABLE_FIELD_PAIR: readonly [MappingFieldKey, MappingFieldKey] = [
+  'docNumber',
+  'docDate',
+];
+
+/**
+ * Поля, без которых структура не годится для сверки: их отсутствие
+ * требует подтверждения пользователя. Сумма считается найденной, если
+ * заданная любая из AMOUNT_SOURCE_FIELDS.
+ */
+export function missingRequiredFields(
+  columns: Record<MappingFieldKey, number | null>,
+): MappingFieldKey[] {
+  const missing = REQUIRED_FIELDS.filter((f) => columns[f] === null);
+  if (!missing.includes('amount')) return missing;
+  const amountAvailable = AMOUNT_SOURCE_FIELDS.some((f) => columns[f] !== null);
+  return amountAvailable ? missing.filter((f) => f !== 'amount') : missing;
+}
+
+/**
  * Маппинг структуры файла: где какая колонка.
  * confidence — уверенность 0..1; source — кто определил структуру.
  */
@@ -156,7 +189,12 @@ export interface BalanceCheck {
   label: string;
   ours: string | null;
   partner: string | null;
-  status: 'match' | 'mismatch' | 'missing';
+  /**
+   * match — значения равны; mismatch — расходятся; mirrored — обороты
+   * совпадают «крест-накрест», что для двустороннего акта означает одну и ту же
+   * картину, а не расхождение; missing — сравнивать нечего.
+   */
+  status: 'match' | 'mismatch' | 'mirrored' | 'missing';
 }
 
 export interface FinalBalance {
@@ -261,8 +299,6 @@ export interface AiDebugInfo {
   errorMessage: string | null;
   rawPreview: string | null;
   attempts: number;
-  /** Была ли использована fallback-модель вместо основной */
-  fallbackUsed?: boolean;
 }
 
 /** Результат AI-сравнения двух актов сверки */

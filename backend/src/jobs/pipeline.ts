@@ -10,7 +10,7 @@
  * Все решения фиксируются в reasoningLog («Логика AI»).
  */
 
-import { CONFIDENCE_THRESHOLD } from '@recon/shared';
+import { CONFIDENCE_THRESHOLD, missingRequiredFields } from '@recon/shared';
 import type {
   ColumnMapping,
   MappingFieldKey,
@@ -27,7 +27,8 @@ import { buildPreview, columnStats } from '../services/heuristics.js';
 import { applyMapping } from '../services/applyMapping.js';
 import { assistStructure } from '../services/ai/structureAssist.js';
 import { aiHypotheses } from '../services/ai/hypotheses.js';
-import { aiConfigFromEnv } from '../services/ai/client.js';
+import { aiConfigFromSettings } from '../services/ai/client.js';
+import type { Settings } from '../settings.js';
 import { reconcileSides } from '../services/reconcile.js';
 import type { ReconcileCoreResult } from '../services/reconcile.js';
 import { buildReport } from '../services/reportBuilder.js';
@@ -123,20 +124,18 @@ async function parseSideBuffer(buffer: Buffer, fileName: string): Promise<RawSou
 
 /* ------------------------------- Структура -------------------------------- */
 
-const REQUIRED: MappingFieldKey[] = ['docNumber', 'docDate', 'amount'];
-
-function missingRequired(mapping: ColumnMapping): MappingFieldKey[] {
-  return REQUIRED.filter((f) => mapping.columns[f] === null);
-}
-
 /**
  * Определяет структуру стороны и решает, нужно ли подтверждение.
  */
-async function resolveStructure(job: Job, role: SideRole): Promise<void> {
+async function resolveStructure(
+  job: Job,
+  role: SideRole,
+  settings: Settings,
+): Promise<void> {
   const source = job.sources[role];
   if (!source) throw new Error(`Источник ${role} не разобран`);
 
-  const { mapping, aiUsed } = await assistStructure(source.grid);
+  const { mapping, aiUsed } = await assistStructure(source.grid, settings);
   job.mappings[role] = mapping;
 
   const label = role === 'ours' ? 'НАШ ФАЙЛ' : 'ФАЙЛ КОНТРАГЕНТА';
@@ -161,7 +160,7 @@ async function resolveStructure(job: Job, role: SideRole): Promise<void> {
     mapping.confidence,
   );
 
-  const missing = missingRequired(mapping);
+  const missing = missingRequiredFields(mapping.columns);
   const lowConfidence = mapping.confidence < CONFIDENCE_THRESHOLD;
 
   if (missing.length > 0 || lowConfidence) {
@@ -191,8 +190,12 @@ function waitForConfirmation(job: Job): Promise<void> {
   });
 }
 
-async function ensureConfirmedStructure(job: Job, role: SideRole): Promise<void> {
-  await resolveStructure(job, role);
+async function ensureConfirmedStructure(
+  job: Job,
+  role: SideRole,
+  settings: Settings,
+): Promise<void> {
+  await resolveStructure(job, role, settings);
   while (
     !job.cancelRequested &&
     job.pendingConfirmation !== null &&
@@ -233,7 +236,7 @@ function extractSide(job: Job, role: SideRole): ParsedSide {
 
 /* ------------------------------- Пайплайн --------------------------------- */
 
-export async function runPipeline(jobId: string): Promise<void> {
+export async function runPipeline(jobId: string, settings: Settings): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error(`Задание ${jobId} не найдено`);
 
@@ -276,7 +279,7 @@ export async function runPipeline(jobId: string): Promise<void> {
     if (job.twoSidedRequested) {
       const partnerIsTextPdf = partnerSource.kind === 'pdf-text' && !partnerSource.needsOcr;
       if (partnerIsTextPdf) {
-        const aiConfig = aiConfigFromEnv();
+        const aiConfig = aiConfigFromSettings(settings);
         const twoSided = await detectTwoSidedPdf(
           partnerSource,
           job.files.partner,
@@ -310,7 +313,7 @@ export async function runPipeline(jobId: string): Promise<void> {
     if (!partnerParsed) {
       const oursIsTextPdf = oursSource.kind === 'pdf-text' && !oursSource.needsOcr;
       if (oursIsTextPdf) {
-        const aiConfig = aiConfigFromEnv();
+        const aiConfig = aiConfigFromSettings(settings);
         const twoSided = await detectTwoSidedPdf(
           oursSource,
           job.files.ours,
@@ -393,10 +396,10 @@ export async function runPipeline(jobId: string): Promise<void> {
     updateStage(job, 'structure', 'Определение структуры таблиц…');
 
     // Стороны обрабатываются последовательно: каждая может запросить подтверждение
-    await ensureConfirmedStructure(job, 'ours');
+    await ensureConfirmedStructure(job, 'ours', settings);
     checkCancelled(job);
     if (!partnerParsed) {
-      await ensureConfirmedStructure(job, 'partner');
+      await ensureConfirmedStructure(job, 'partner', settings);
       checkCancelled(job);
     }
 
@@ -424,28 +427,26 @@ export async function runPipeline(jobId: string): Promise<void> {
     /* ------------------------------ analysis ---------------------------- */
     checkCancelled(job);
     updateStage(job, 'analysis', 'Формирование отчёта и гипотез…');
-    const config = aiConfigFromEnv();
-    const hypothesesAi = config.apiKey
-      ? await aiHypotheses(config, {
-          summary: {
-            ourTotal: oursParsed.rows.length,
-            partnerTotal: partnerParsed.rows.length,
-            matched: coreResult.matchedPairs.length,
-            onlyOurs: coreResult.onlyOurs.length,
-            onlyPartner: coreResult.onlyPartner.length,
-            amountMismatches: coreResult.amountMismatches.length,
-            dateMismatches: coreResult.dateMismatches.length,
-            balanceIssues: 0,
-          },
-          balanceIssues: [],
-          assumptions: [...oursParsed.assumptions, ...partnerParsed.assumptions],
-          samples: {
-            amountMismatches: coreResult.amountMismatches,
-            onlyOurs: coreResult.onlyOurs,
-            onlyPartner: coreResult.onlyPartner,
-          },
-        })
-      : null;
+    const config = aiConfigFromSettings(settings);
+    const hypothesesAi = await aiHypotheses(config, {
+      summary: {
+        ourTotal: oursParsed.rows.length,
+        partnerTotal: partnerParsed.rows.length,
+        matched: coreResult.matchedPairs.length,
+        onlyOurs: coreResult.onlyOurs.length,
+        onlyPartner: coreResult.onlyPartner.length,
+        amountMismatches: coreResult.amountMismatches.length,
+        dateMismatches: coreResult.dateMismatches.length,
+        balanceIssues: 0,
+      },
+      balanceIssues: [],
+      assumptions: [...oursParsed.assumptions, ...partnerParsed.assumptions],
+      samples: {
+        amountMismatches: coreResult.amountMismatches,
+        onlyOurs: coreResult.onlyOurs,
+        onlyPartner: coreResult.onlyPartner,
+      },
+    });
 
     const report = buildReport({
       jobId: job.id,

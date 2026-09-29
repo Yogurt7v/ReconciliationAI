@@ -9,7 +9,13 @@
  *     и для confidence, и для экрана подтверждения у пользователя.
  */
 
-import { cellToString, columnLetter, parseDate, parseMoney } from '@recon/shared';
+import {
+  cellToString,
+  columnLetter,
+  missingRequiredFields,
+  parseDate,
+  parseMoney,
+} from '@recon/shared';
 import type { CellValue, ColumnMapping, ColumnStats, Grid, MappingFieldKey, PreviewTable } from '@recon/shared';
 
 interface HeaderKeyword {
@@ -210,9 +216,7 @@ export function heuristicMapping(analysis: GridAnalysis, headerLine?: CellValue[
   }
 
   // Пересчитываем обязательные поля после комбинированного маппинга
-  const missingAfter = (['docNumber', 'docDate', 'amount'] as MappingFieldKey[]).filter(
-    (f) => columns[f] === null,
-  );
+  const missingAfter = missingRequiredFields(columns);
   if (missingAfter.length > 0) {
     confidence = Math.min(confidence, 0.45);
     reasoning.push(

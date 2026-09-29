@@ -33,6 +33,9 @@ export const MAX_ACTIVE_JOBS = 10;
 /** TTL задания: 30 минут (safety, основная очистка — при старте нового анализа) */
 export const JOB_TTL_MS = 30 * 60 * 1000;
 
-/** Лимит запросов rate limiting */
-export const RATE_LIMIT_MAX = 10;
+/**
+ * Лимит rate limiting: не больше N дорогих POST-запросов к /api за окно.
+ * GET (статика, health, опрос статуса задания) не ограничиваются.
+ */
+export const RATE_LIMIT_MAX = 30;
 export const RATE_LIMIT_WINDOW_MS = 60_000;

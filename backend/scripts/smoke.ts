@@ -11,6 +11,8 @@ import path from 'node:path';
 
 import { confirmMapping, createJob, toStatus } from '../src/jobs/store.js';
 import { runPipeline } from '../src/jobs/pipeline.js';
+import { shutdownOcrWorker } from '../src/parsers/ocrPipeline.js';
+import { loadSettings } from '../src/settings.js';
 import { buildHtmlReport } from '../src/services/export/htmlReport.js';
 import { buildScenarios, buildPdfPairs } from './generate-samples.js';
 import type { SamplePair } from './generate-samples.js';
@@ -30,7 +32,7 @@ async function runPair(pair: SamplePair, outDir: string): Promise<SmokeResult> {
     { ours: path.basename(pair.oursFile), partner: path.basename(pair.partnerFile) },
     { ours, partner },
   );
-  const pipelinePromise = runPipeline(job.id);
+  const pipelinePromise = runPipeline(job.id, loadSettings());
 
   // Smoke принимает предложенный маппинг автоматически (Human-in-the-Loop)
   const confirmTimer = setInterval(() => {
@@ -129,6 +131,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(`Все сценарии прошли: ${all.length}/${all.length}`);
+  // Воркер OCR держит event loop: без явного выхода процесс не завершится.
+  await shutdownOcrWorker();
 }
 
 await main();

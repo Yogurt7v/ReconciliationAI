@@ -15,17 +15,11 @@ import { SwapIcon } from '../components/icons';
 const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
 
 interface Props {
-  model: string;
-  apiKey: string;
   /** Фактическая конфигурация backend (null, если недоступна) */
   runtime?: import('../api').AiRuntimeInfo | null;
-  onBack?: () => void;
 }
 
-export default function MainScreen({ model, apiKey, runtime, onBack }: Props) {
-  // В режиме «только локально» выбранная в UI облачная модель backend'ом
-  // игнорируется — показываем и отправляем фактически применяемую.
-  const effectiveModel = runtime?.localOnly ? runtime.model : model;
+export default function MainScreen({ runtime }: Props) {
   const slotA = useEditableData();
   const slotB = useEditableData();
   const [overA, setOverA] = useState(false);
@@ -57,7 +51,7 @@ export default function MainScreen({ model, apiKey, runtime, onBack }: Props) {
     if (!slot.file) return;
     setSlot((s) => ({ ...s, busy: true, error: null, debugError: null }));
     try {
-      const res = await api.testAnalyze(slot.file, effectiveModel, apiKey);
+      const res = await api.testAnalyze(slot.file);
       setSlot((s) => ({ ...s, result: res, data: structuredClone(res.result), busy: false }));
     } catch (err) {
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
@@ -68,7 +62,7 @@ export default function MainScreen({ model, apiKey, runtime, onBack }: Props) {
         busy: false,
       }));
     }
-  }, [effectiveModel, apiKey]);
+  }, []);
 
   const analyzeBoth = useCallback(async () => {
     await Promise.all([
@@ -84,7 +78,7 @@ export default function MainScreen({ model, apiKey, runtime, onBack }: Props) {
 
     setComparing(true);
     try {
-      const result = await api.compare(a, b, effectiveModel, apiKey);
+      const result = await api.compare(a, b);
       setComparison(result);
     } catch (err) {
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
@@ -120,7 +114,7 @@ export default function MainScreen({ model, apiKey, runtime, onBack }: Props) {
     } finally {
       setComparing(false);
     }
-  }, [slotA.slot.data, slotB.slot.data, effectiveModel, apiKey]);
+  }, [slotA.slot.data, slotB.slot.data]);
 
   return (
     <div>
@@ -347,12 +341,7 @@ function ResultCard({ slot, label, updaters, runtime }: ResultCardProps) {
           <summary>Диагностика AI</summary>
           <div className="details-code-panel">
             <div><strong>Модель:</strong> {d.model}</div>
-            {d.fallbackUsed && <div><strong>Fallback:</strong> основная модель была недоступна</div>}
-            {runtime && (
-              <div>
-                <strong>Провайдер:</strong> {runtime.provider === 'ollama' ? 'Ollama (локально)' : 'OpenRouter (облако)'}
-              </div>
-            )}
+            {runtime && <div><strong>Провайдер:</strong> Ollama (локально)</div>}
             <div><strong>HTTP статус:</strong> {d.httpStatus ?? '---'}</div>
             <div><strong>Попыток:</strong> {d.attempts}</div>
             <div><strong>Длина ответа:</strong> {d.contentLength} символов</div>

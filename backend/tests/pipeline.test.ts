@@ -1,18 +1,15 @@
 /**
- * Интеграционные тесты оркестрации: полный прогон без AI-ключа
- * (деградированный режим), поток подтверждения структуры, отмена
+ * Интеграционные тесты оркестрации: полный прогон при недоступной модели
+ * (деградация к эвристикам), поток подтверждения структуры, отмена
  * и двухсторонний парсинг PDF.
  */
 
 import * as XLSX from 'xlsx';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createJob, getJob, confirmMapping, requestCancel, toStatus } from '../src/jobs/store.js';
 import { runPipeline } from '../src/jobs/pipeline.js';
-
-afterEach(() => {
-  delete process.env.OPENROUTER_API_KEY;
-});
+import { loadSettings } from '../src/settings.js';
 
 /** xlsx-буфер из массива массивов */
 function xlsxBuffer(rows: unknown[][]): Buffer {
@@ -32,14 +29,14 @@ function goodRows(): unknown[][] {
   ];
 }
 
-describe('runPipeline (деградированный режим, без ключа)', () => {
+describe('runPipeline (деградация к эвристикам, модель недоступна)', () => {
   it('полный прогон идеальной пары файлов → done + отчёт', async () => {
     const job = createJob(
       { ours: 'ours.xlsx', partner: 'partner.xlsx' },
       { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
     );
 
-    await runPipeline(job.id);
+    await runPipeline(job.id, loadSettings());
 
     const status = toStatus(job);
     expect(status.stage).toBe('done');
@@ -70,7 +67,7 @@ describe('runPipeline (деградированный режим, без клю�
       { ours: xlsxBuffer(unclear), partner: xlsxBuffer(unclear) },
     );
 
-    const running = runPipeline(job.id);
+    const running = runPipeline(job.id, loadSettings());
     let confirmations = 0;
 
     // Обе стороны могут запросить подтверждение — подтверждаем по мере появления
@@ -106,7 +103,7 @@ describe('runPipeline (деградированный режим, без клю�
     );
     expect(requestCancel(job.id)).toBe(true);
 
-    await runPipeline(job.id);
+    await runPipeline(job.id, loadSettings());
     expect(job.stage).toBe('cancelled');
     expect(job.error).toBeNull();
     expect(requestCancel(job.id)).toBe(false); // терминальная стадия
@@ -155,7 +152,7 @@ describe('runPipeline (двухсторонний PDF контрагента)', 
       true, // twoSidedRequested
     );
 
-    await runPipeline(job.id);
+    await runPipeline(job.id, loadSettings());
 
     const status = toStatus(job);
     expect(status.stage).toBe('done');
@@ -207,7 +204,29 @@ describe('confirmMapping валидация', () => {
     })).toBe(false);
   });
 
-  it('отклоняет дублирующиеся колонки', () => {
+  it('принимает общую колонку «номер + дата» из объединённого заголовка', () => {
+    const job = createJob(
+      { ours: 'o.xlsx', partner: 'p.xlsx' },
+      { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows())},
+    );
+    job.pendingConfirmation = {
+      side: 'ours',
+      reason: 'test',
+      preview: { headers: [], columnLetters: [], rows: [], stats: [], totalRows: 0 },
+      suggested: { headerRowIndex: 0, dataStartRowIndex: 1, columns: { docNumber: 0, docDate: 0, amount: 2, debit: null, credit: null }, confidence: 0.5, source: 'heuristic', reasoning: [] },
+    };
+
+    // В актах сверки «Дата документа» и «Номер документа» часто объединены в
+    // один заголовок, а номер лежит в скобках. Эвристика строит именно такую
+    // раскладку, и отклонять её значило бы оставлять задание навсегда в HITL.
+    expect(confirmMapping(job.id, {
+      headerRowIndex: 0,
+      dataStartRowIndex: 1,
+      columns: { docNumber: 0, docDate: 0, amount: 2, debit: null, credit: null },
+    })).toBe(true);
+  });
+
+  it('отклоняет совпадение не связанных полей', () => {
     const job = createJob(
       { ours: 'o.xlsx', partner: 'p.xlsx' },
       { ours: xlsxBuffer(goodRows()), partner: xlsxBuffer(goodRows()) },
@@ -219,10 +238,11 @@ describe('confirmMapping валидация', () => {
       suggested: { headerRowIndex: 0, dataStartRowIndex: 1, columns: { docNumber: 0, docDate: 1, amount: 2, debit: null, credit: null }, confidence: 0.5, source: 'heuristic', reasoning: [] },
     };
 
+    // «Сумма» и «Дебет» — разные величины: одна колонка не может быть обеими.
     expect(confirmMapping(job.id, {
       headerRowIndex: 0,
       dataStartRowIndex: 1,
-      columns: { docNumber: 0, docDate: 0, amount: 2, debit: null, credit: null },
+      columns: { docNumber: 0, docDate: 1, amount: 2, debit: 2, credit: null },
     })).toBe(false);
   });
 

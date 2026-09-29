@@ -130,6 +130,56 @@ describe('buildReport', () => {
     expect(report.summary.balanceIssues).toBe(3);
   });
 
+  it('зеркальные обороты не считаются расхождением', () => {
+    // Акт сверки двусторонний: одна операция у нас в дебете, у контрагента в
+    // кредите. Обороты совпадают крест-накрест — это одна картина с двух
+    // сторон, а не расхождение.
+    const ours = side('ours', [['1', '2026-04-20', '1000.00']], {
+      turnoverDebit: '1000.00',
+      turnoverCredit: '3000.00',
+    });
+    const partner = side('partner', [['1', '2026-04-20', '1000.00']], {
+      turnoverDebit: '3000.00',
+      turnoverCredit: '1000.00',
+    });
+
+    const report = buildReport(baseInput(ours, partner));
+    const byKey = Object.fromEntries(report.balanceChecks.map((b) => [b.key, b.status]));
+
+    expect(byKey.turnoverDebit).toBe('mirrored');
+    expect(byKey.turnoverCredit).toBe('mirrored');
+    expect(report.summary.balanceIssues).toBe(0);
+  });
+
+  it('похожие, но не зеркальные обороты остаются расхождением', () => {
+    const ours = side('ours', [['1', '2026-04-20', '1000.00']], {
+      turnoverDebit: '1000.00',
+      turnoverCredit: '3000.00',
+    });
+    // Кредит не равен нашему дебету — зеркала нет
+    const partner = side('partner', [['1', '2026-04-20', '1000.00']], {
+      turnoverDebit: '3000.00',
+      turnoverCredit: '2500.00',
+    });
+
+    const report = buildReport(baseInput(ours, partner));
+    const byKey = Object.fromEntries(report.balanceChecks.map((b) => [b.key, b.status]));
+
+    expect(byKey.turnoverDebit).toBe('mismatch');
+    expect(report.summary.balanceIssues).toBe(2);
+  });
+
+  it('«нет данных» у обеих сторон не попадает в проблемы', () => {
+    const ours = side('ours', [['1', '2026-04-20', '1000.00']]);
+    const partner = side('partner', [['1', '2026-04-20', '1000.00']]);
+
+    const report = buildReport(baseInput(ours, partner));
+
+    // Все четыре проверки «missing» — сравнивать нечего, расхождений нет
+    expect(report.summary.balanceIssues).toBe(0);
+    expect(report.balanceChecks.every((b) => b.status === 'missing')).toBe(true);
+  });
+
   it('гипотезы: правила + AI, при деградации — шаг в логике AI', () => {
     const ours = side('ours', [['1', '2026-03-01', '15000.00']]);
     const partner = side('partner', [['1', '2026-03-01', '10000.00']]);

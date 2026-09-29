@@ -279,7 +279,6 @@ export async function parseTwoSidedPdf(
   pdfText: string,
   fileName: string,
 ): Promise<AiStructuredResult | null> {
-  if (!config.apiKey) return null;
   if (!pdfText.trim()) return null;
 
   try {

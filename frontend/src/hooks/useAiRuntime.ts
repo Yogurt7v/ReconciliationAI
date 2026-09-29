@@ -3,11 +3,9 @@ import { useEffect, useState } from 'react';
 import { api, type AiRuntimeInfo } from '../api';
 
 /**
- * Фактическая AI-конфигурация backend.
- *
- * Нужна, потому что выбранная в UI модель может не совпадать с реально
- * применяемой: в режиме REQUIRE_LOCAL_ONLY облачные ID игнорируются, и
- * backend подставляет локальную модель из OLLAMA_MODEL.
+ * Фактическая AI-конфигурация backend — чтобы показать пользователю, какая
+ * модель применяется на самом деле (OLLAMA_MODEL из settings.txt) и предупредить,
+ * если backend недоступен.
  */
 export function useAiRuntime(): AiRuntimeInfo | null {
   const [info, setInfo] = useState<AiRuntimeInfo | null>(null);

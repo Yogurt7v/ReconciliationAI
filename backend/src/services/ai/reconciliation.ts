@@ -260,10 +260,6 @@ export async function generateAiAnalysis(
   compareResult: CompareResult,
   config: AiConfig,
 ): Promise<{ text: string; debug: AiDebugInfo }> {
-  if (!config.apiKey) {
-    throw new AiUnavailableError('OPENROUTER_API_KEY не задан — AI-анализ недоступен.');
-  }
-
   const payload = {
     summary: compareResult.summary,
     onlyInYour: compareResult.onlyInYour.map((t) => ({
@@ -316,7 +312,7 @@ export async function fullReconciliation(
 ): Promise<{ result: CompareResult; debug?: AiDebugInfo }> {
   const result = compareDocuments(yourData, partnerData);
 
-  if (config?.apiKey) {
+  if (config) {
     try {
       const { text, debug } = await generateAiAnalysis(result, config);
       result.aiAnalysis = text;
