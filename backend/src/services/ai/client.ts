@@ -118,7 +118,7 @@ export function aiProgressText(event: AiProgressEvent): string {
   if (event.phase === 'attempt') {
     return event.attempt > 1
       ? `${prefix}модель не ответила, повторная попытка ${event.attempt}/${event.maxAttempts}…`
-      : `${prefix}модель анализирует данные (может занять до минуты)…`;
+      : `${prefix}модель анализирует данные…`;
   }
   if (event.phase === 'success') {
     return `${prefix}готово за ${formatElapsed(event.elapsedMs ?? 0)}`;

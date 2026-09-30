@@ -14,7 +14,8 @@ pnpm test         vitest: shared + backend (фронтенд без тестов
 pnpm typecheck    tsc --noEmit во всех пакетах
 pnpm samples      демо-пары файлов в backend/samples/
 pnpm smoke        e2e прогон пайплайна на демо-парах
-build-win.cmd     portable-сборка (только Windows)
+build-win.cmd     portable-сборка (только Windows), инкрементальная
+build-win.cmd clean   та же сборка с полной очисткой dist-portable
 ```
 
 Отдельный пакет: `pnpm --filter @recon/backend test`.
@@ -63,6 +64,12 @@ build-win.cmd     portable-сборка (только Windows)
 Стадии пайплайна: `uploaded → parsing → structure → (awaiting_confirmation) →
 extraction → reconciliation → analysis → done`, плюс `failed` / `cancelled`.
 
+Детализация внутри стадии: `updateStage(job, stage, message, inner)` даёт
+сообщение + дробный прогресс (`inner` 0..1), `updateMessage` меняет только
+текст. Стадия `parsing` включает AI-вызов двухстороннего акта, `structure` —
+определение структуры обеих таблиц. ETA не считается: вместо него во
+фронтенд уходят сообщение и «прошло …».
+
 `runPipeline(jobId, settings)` принимает настройки вторым аргументом — пайплайн
 не читает конфиг сам.
 
@@ -71,8 +78,13 @@ extraction → reconciliation → analysis → done`, плюс `failed` / `cance
 Только локальная модель. `src/services/ai/client.ts`:
 
 - `aiConfigFromSettings(settings)` → `{ baseUrl, model, timeoutMs }`;
-- `requestJson` — один таймаут из `AI_TIMEOUT_SEC` и ровно один повтор при
-  сети/таймауте/5xx/429; на 4xx повтора нет;
+- `requestJson(config, system, payload, { timeoutMs?, onProgress?, label? })` —
+  единственный таймаут из `AI_TIMEOUT_SEC`, жёстких таймаутов на отдельных
+  вызовах нет; ровно один повтор при сети/таймауте/5xx/429, на 4xx повтора нет;
+- каждый вызов логируется с меткой и таймингом:
+  `[AI] [метка] попытка 1/2, model=…, таймаут=… мс` / `ok за X с`;
+- события `onProgress` превращаются `aiProgressText` в сообщение статуса
+  джобы: «Структура таблицы: модель анализирует данные …»;
 - `AiUnavailableError.retryable` определяет, стоит ли повторять;
 - ключей API, облачных провайдеров и цепочек запасных моделей нет как класса;
 - при недоступности модели вызывающий код деградирует к эвристикам, причина
@@ -82,6 +94,9 @@ extraction → reconciliation → analysis → done`, плюс `failed` / `cance
 
 - React 19, без роутера, два режима переключаются в шапке: «Сверка»
   (полный пайплайн, `JobScreen`) и «Быстро» (`MainScreen`).
+- `JobScreen`: степпер «Ход обработки» (parsing/structure/extraction/
+  reconciliation/analysis), таймер «прошло …», сообщение стадии с анимацией
+  смены и пульсация прогресс-бара, если прогресс не менялся ≥4 с. ETA нет.
 - Рантайм-конфиг: `index.html` подключает `/config.js`, который backend отдаёт
   из `settings.txt`. Пустой `API_BASE_URL` → запросы на тот же origin.
 - `apiUrl(path)` в `src/api.ts` — единственное место, где собирается базовый URL.
@@ -112,6 +127,25 @@ extraction → reconciliation → analysis → done`, плюс `failed` / `cance
 `dist-portable/` из `pnpm deploy --prod --legacy` — папка самодостаточна,
 внешних ссылок в `node_modules` нет. Папку нельзя распаковывать из zip:
 в `node_modules` есть относительные ссылки нативных модулей.
+
+Сборка инкрементальная (шаги `[1/9]…[9/9]`):
+
+- `build-check.ps1` печатает `FRONTEND=`, `BACKEND=`, `INSTALL=` — по ним
+  `build-win.cmd` пропускает `vite build`, `pnpm deploy` и `pnpm install`;
+- штамп инкрементальности — `dist-portable\.build-stamp`, его mtime сравнивается
+  с самыми свежими входами (`backend/src`, `shared/src`, `package.json`,
+  `pnpm-lock.yaml`); при пропуске deploy `dist-portable` не очищается;
+- полная очистка — `build-win.cmd clean`;
+- перед копированием `frontend/dist` старая папка в portable удаляется, иначе
+  остаются файлы с прежними хешами имён;
+- каждый запуск удаляет мусорный `backend\dist-portable` — туда `pnpm --filter`
+  роняет бинарники `.bin` (отсюда был `EPERM` на `xlsx`).
+
+Ориентиры времени (SSD): 2.2 с без изменений, 4.1 с первая сборка, 5.4 с при
+изменении backend'а или `clean`.
+
+Внимание: cmd-оператор `if file1 newer file2` на этой машине падает
+(«Недопустимо после: newer») — все сравнения дат живут в `build-check.ps1`.
 
 ## Соглашения
 

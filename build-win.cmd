@@ -16,12 +16,18 @@ rem      frontend\dist\     <- собранный интерфейс (его р�
 rem      app\               <- backend: исходники, зависимости, .tessdata, logs, reports
 rem
 rem  Требуется: Node.js 20+ (LTS 22) и pnpm 9+ в PATH.
-rem ============================================================================
+rem
+rem  Сборка инкрементальная: неизменённые части не пересобираются
+rem  (свежесть считает build-check.ps1). Полная очистка dist-portable:
+rem    build-win.cmd clean
+rem ====================================================================================
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "OUT=%ROOT%\dist-portable"
 set "APP=%OUT%\app"
+set "FORCE_CLEAN=0"
+if /i "%~1"=="clean" set "FORCE_CLEAN=1"
 
 echo.
 echo  ============================================================
@@ -37,7 +43,7 @@ if errorlevel 1 (
   goto :fail
 )
 for /f "delims=" %%v in ('node --version') do set "NODE_VERSION=%%v"
-echo  [1/8] Node: !NODE_VERSION!
+echo  [1/9] Node: !NODE_VERSION!
 
 where pnpm >nul 2>nul
 if errorlevel 1 (
@@ -55,39 +61,88 @@ if not defined NODE_EXE (
   goto :fail
 )
 
-rem ------------------------- 2. Чистая сборка --------------------------
+rem ----------------------- 2. Свежесть и очистка ------------------------
+rem  build-check.ps1 печатает FRONTEND=0|1 и BACKEND=0|1 (1 = можно не
+rem  пересобирать). Флаги читаем ДО очистки: штамп лежит в dist-portable.
 
-echo  [2/8] Установка зависимостей (может занять несколько минут)...
-set "CI=true"
-call pnpm install --frozen-lockfile
-if errorlevel 1 (
-  echo        --frozen-lockfile не прошёл, пробуем обычную установку...
-  call pnpm install
+echo  [2/9] Свежесть артефактов и очистка...
+set "F_FRONTEND=0"
+set "F_BACKEND=0"
+set "F_INSTALL=1"
+for /f "usebackq tokens=1,2 delims==" %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\build-check.ps1"`) do (
+  if "%%a"=="FRONTEND" set "F_FRONTEND=%%b"
+  if "%%a"=="BACKEND" set "F_BACKEND=%%b"
+  if "%%a"=="INSTALL" set "F_INSTALL=%%b"
+)
+if "!FORCE_CLEAN!"=="1" (
+  set "F_BACKEND=0"
+  echo        режим clean - полная очистка
+)
+
+rem  dist-portable целиком удаляем, только если backend не свежий или
+rem  включён clean: при пропуске deploy app остался бы удалённым.
+if "!F_BACKEND!"=="0" (
+  if exist "%OUT%" (
+    rmdir /s /q "%OUT%"
+    if exist "%OUT%" (
+      echo  [ОШИБКА] Не удалось удалить старую сборку: %OUT%
+      echo           Закройте приложение и файлы из этой папки, повторите сборку.
+      goto :fail
+    )
+    echo        удалена старая папка dist-portable
+  )
+) else (
+  echo        dist-portable\app актуален, очистка пропущена
+)
+rem  Мусор, который pnpm --filter иногда оставляет рядом с backend\
+if exist "%ROOT%\backend\dist-portable" (
+  rmdir /s /q "%ROOT%\backend\dist-portable"
+  if not exist "%ROOT%\backend\dist-portable" echo        удалён мусор backend\dist-portable
+)
+
+echo  [3/9] Установка зависимостей (может занять несколько минут)...
+rem  F_INSTALL=0, когда node_modules не старше pnpm-lock.yaml
+if "!F_INSTALL!"=="0" (
+  echo        node_modules актуальны, пропущено
+) else (
+  set "CI=true"
+  call pnpm install --frozen-lockfile
   if errorlevel 1 (
-    echo  [ОШИБКА] pnpm install завершился с ошибкой
-    goto :fail
+    echo        --frozen-lockfile не прошёл, пробуем обычную установку...
+    call pnpm install
+    if errorlevel 1 (
+      echo  [ОШИБКА] pnpm install завершился с ошибкой
+      goto :fail
+    )
   )
 )
 
-rem --------------------------- 3. Фронтенд -----------------------------
+rem --------------------------- 4. Фронтенд -----------------------------
 
-echo  [3/8] Сборка интерфейса...
-call pnpm --filter @recon/frontend build
-if errorlevel 1 (
-  echo  [ОШИБКА] Сборка интерфейса не удалась
-  goto :fail
+echo  [4/9] Сборка интерфейса...
+if "!F_FRONTEND!"=="1" (
+  echo        frontend\dist актуален, пропущено
+) else (
+  call pnpm --filter @recon/frontend build
+  if errorlevel 1 (
+    echo  [ОШИБКА] Сборка интерфейса не удалась
+    goto :fail
+  )
 )
 if not exist "%ROOT%\frontend\dist\index.html" (
   echo  [ОШИБКА] frontend\dist\index.html не создан
   goto :fail
 )
 
-rem ------------------- 4. Развёртывание backend'а -----------------------
+rem ------------------- 5. Развёртывание backend'а -----------------------
 rem  pnpm deploy собирает самодостаточную папку с зависимостями: все ссылки
 rem  внутри node_modules ведут в .pnpm рядом, наружу ничего не торчит.
 
-echo  [4/8] Развёртывание backend и зависимостей...
-if exist "%OUT%" rmdir /s /q "%OUT%"
+echo  [5/9] Развёртывание backend и зависимостей...
+if "!F_BACKEND!"=="1" (
+  echo        app и зависимости актуальны, пропущено
+  goto :skip_deploy
+)
 call pnpm --filter @recon/backend deploy --prod --legacy "%APP%"
 if errorlevel 1 (
   echo  [ОШИБКА] pnpm deploy завершился с ошибкой
@@ -99,11 +154,17 @@ if exist "%APP%\tests" rmdir /s /q "%APP%\tests"
 if exist "%APP%\samples" rmdir /s /q "%APP%\samples"
 if exist "%APP%\reports" rmdir /s /q "%APP%\reports"
 if exist "%APP%\vitest.config.ts" del /q "%APP%\vitest.config.ts"
+rem  pnpm --filter работает из backend\ и может уронить .bin в относительный путь
+if exist "%ROOT%\backend\dist-portable" rmdir /s /q "%ROOT%\backend\dist-portable"
+:skip_deploy
 
-rem --------------------------- 5. Файлы приложения ----------------------
+rem --------------------------- 6. Файлы приложения ----------------------
 
-echo  [5/8] Раскладка файлов...
+echo  [6/9] Раскладка файлов...
 if not exist "%APP%\logs" mkdir "%APP%\logs"
+rem  Всегда перекладываем интерфейс заново: иначе в portable остаются
+rem  старые файлы с прежними хешами имён
+if exist "%OUT%\frontend" rmdir /s /q "%OUT%\frontend"
 if not exist "%OUT%\frontend" mkdir "%OUT%\frontend"
 xcopy /E /I /Y /Q "%ROOT%\frontend\dist" "%OUT%\frontend\dist" >nul
 if errorlevel 1 (
@@ -134,20 +195,33 @@ if errorlevel 1 (
   goto :fail
 )
 
-rem --------------------------- 6. Встроенный Node -----------------------
+rem --------------------------- 7. Встроенный Node -----------------------
 
-echo  [6/8] Встроенный Node...
-if not exist "%OUT%\runtime" mkdir "%OUT%\runtime"
-copy /Y "!NODE_EXE!" "%OUT%\runtime\node.exe" >nul
-if errorlevel 1 (
-  echo  [ОШИБКА] Не удалось скопировать node.exe в runtime\
-  goto :fail
+echo  [7/9] Встроенный Node...
+rem  Копируем только если runtime отсутствует или версия отличается
+set "NEED_NODE=1"
+if exist "%OUT%\runtime\node.exe" (
+  set "EMBED_VER="
+  for /f "delims=" %%v in ('"%OUT%\runtime\node.exe" --version 2^>nul') do set "EMBED_VER=%%v"
+  if "!EMBED_VER!"=="!NODE_VERSION!" set "NEED_NODE=0"
+)
+if "!NEED_NODE!"=="1" (
+  if not exist "%OUT%\runtime" mkdir "%OUT%\runtime"
+  copy /Y "!NODE_EXE!" "%OUT%\runtime\node.exe" >nul
+  if errorlevel 1 (
+    echo  [ОШИБКА] Не удалось скопировать node.exe в runtime\
+    goto :fail
+  )
+) else (
+  echo        runtime\node.exe актуален, пропущено
 )
 
-rem --------------------------- 7. Данные для OCR ------------------------
+rem --------------------------- 8. Данные для OCR ------------------------
 
-echo  [7/8] Данные OCR (tessdata)...
-if exist "%ROOT%\backend\.tessdata" (
+echo  [8/9] Данные OCR (tessdata)...
+if exist "%APP%\.tessdata\*.traineddata" (
+  echo        уже в сборке, пропущено
+) else if exist "%ROOT%\backend\.tessdata" (
   xcopy /E /I /Y /Q "%ROOT%\backend\.tessdata" "%APP%\.tessdata" >nul
   echo        скопировано из backend\.tessdata
 ) else (
@@ -161,9 +235,9 @@ if exist "%ROOT%\backend\.tessdata" (
   )
 )
 
-rem --------------------------- 8. Проверка ------------------------------
+rem --------------------------- 9. Проверка ------------------------------
 
-echo  [8/8] Проверка сборки...
+echo  [9/9] Проверка сборки...
 set "MISSING="
 if not exist "%APP%\src\index.ts" set "MISSING=!MISSING! app\src\index.ts"
 if not exist "%APP%\node_modules\tsx\dist\cli.mjs" set "MISSING=!MISSING! tsx"
@@ -175,6 +249,9 @@ if defined MISSING (
   echo  [ОШИБКА] Не хватает файлов:!MISSING!
   goto :fail
 )
+
+rem  Штамп инкрементальной сборки (его читает build-check.ps1)
+> "%OUT%\.build-stamp" echo build %DATE% %TIME%
 
 echo.
 echo  ============================================================
