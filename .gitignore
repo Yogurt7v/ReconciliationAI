@@ -4,6 +4,8 @@ dist/
 dist-portable/
 *.tsbuildinfo
 
+
+
 # Настройки приложения: settings.example.txt — шаблон, settings.txt — живая копия
 settings.txt
 
@@ -23,3 +25,8 @@ logs/
 
 # Личные документы для ручной проверки — не коммитим, в них данные контрагентов
 test/*
+
+# Служебные данные агентов (OpenCode, OhMyOpenCode, OpenRouter) — не коммитим
+.openrouter/*
+.omo/*
+.opencode/*
