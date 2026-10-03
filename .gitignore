@@ -28,6 +28,7 @@ logs/
 test/*
 
 # Служебные данные агентов (OpenCode, OhMyOpenCode, OpenRouter) — не коммитим
-.openrouter/*
+.openrouter
 .omo
 .opencode
+.playwright-mcp
