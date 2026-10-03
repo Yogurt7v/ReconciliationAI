@@ -1,0 +1,27 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "Reconciliation AI" [level=1] [ref=e6]
+      - paragraph [ref=e7]: Сверка актов сверки с контрагентами
+    - generic "Backend недоступен — какая модель ответит, неизвестно." [ref=e8]: Модель недоступна
+  - button "Настройки модели" [ref=e9] [cursor=pointer]
+  - tablist [ref=e13]:
+    - tab "Сверка" [selected] [ref=e14] [cursor=pointer]
+    - tab "Быстро" [ref=e15] [cursor=pointer]
+  - generic [ref=e16]:
+    - generic [ref=e17]:
+      - heading "Сверка актов" [level=2] [ref=e18]
+      - paragraph [ref=e19]: "Полный разбор с распознаванием сканов: определяется структура таблицы, извлекаются документы, выполняется сверка и строится отчёт."
+    - generic [ref=e20]:
+      - button "Наш файл Перетащите файл или нажмите" [ref=e21] [cursor=pointer]:
+        - generic [ref=e25]: Наш файл
+        - generic [ref=e26]: Перетащите файл или нажмите
+      - button "Файл контрагента Перетащите файл или нажмите" [ref=e27] [cursor=pointer]:
+        - generic [ref=e31]: Файл контрагента
+        - generic [ref=e32]: Перетащите файл или нажмите
+    - generic [ref=e33] [cursor=pointer]:
+      - checkbox "У контрагента двухсторонний акт (обе стороны в одном PDF)" [ref=e34]
+      - generic [ref=e35]: У контрагента двухсторонний акт (обе стороны в одном PDF)
+    - generic [ref=e36]:
+      - generic [ref=e37]: XLSX или PDF, до 50 МБ
+      - button "Начать сверку" [disabled] [ref=e38]

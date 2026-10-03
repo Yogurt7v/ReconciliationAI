@@ -1,5 +1,5 @@
 /**
- * AI-ассистент определения структуры таблицы (локальная модель Ollama).
+ * AI-ассистент определения структуры таблицы.
  *
  * Стратегия:
  *  1. Всегда считаем эвристику (analyzeAndMap) — это база и запасной путь.
@@ -10,6 +10,17 @@
  *     из эвристики; source='ai+heuristic'.
  *  4. Любая ошибка модели → деградация к чистой эвристике,
  *     причина фиксируется в reasoning (попадёт в «Логику AI»).
+ *
+ * Модель задаёт вызывающий код (`AiConfig`): локальная Ollama или удалённый
+ * профиль оператора. Сбор конфига из настроек здесь больше не происходит —
+ * иначе стадия structure продолжала бы работать на локальной модели, пока
+ * остальные стадии пайплайна уже используют выбранную удалённую.
+ *
+ * Исключение из правила 4: отказ провайдера, который повтор не исправит
+ * (отвергнутый ключ, нет денег, нет такой модели), деградацией **не**
+ * считается — он попадает в `terminalError`, и вызывающий код роняет задание.
+ * Локальная модель этим каналом не пользуется: её ошибки operator чинит сам,
+ * и пайплайн продолжает считать эвристиками, как и раньше.
  */
 
 import { AI_STRUCTURE_SAMPLE_ROWS, missingRequiredFields } from '@recon/shared';
@@ -17,9 +28,8 @@ import type { ColumnMapping, Grid, MappingFieldKey } from '@recon/shared';
 
 import { cellToString } from '@recon/shared';
 import { analyzeAndMap } from '../heuristics.js';
-import type { Settings } from '../../settings.js';
-import { AiUnavailableError, aiConfigFromSettings, requestJson } from './client.js';
-import type { AiProgressCallback } from './client.js';
+import { AiUnavailableError, requestJson } from './client.js';
+import type { AiConfig, AiProgressCallback } from './client.js';
 
 interface AiStructureResponse {
   headerRowIndex?: number;
@@ -41,10 +51,25 @@ const SYSTEM_PROMPT = `Ты помогаешь разобрать бухгалт
 - reasoning: 2–5 коротких объяснений на русском, почему выбраны колонки.
 Отвечай строго JSON без markdown.`;
 
+/**
+ * Нелечимый отказ провайдера: ни повтор, ни деградация к эвристике его не
+ * скроют. Заполняется только для удалённого провайдера (см. шапку модуля).
+ */
+export interface StructureTerminalError {
+  /** null — провайдер вернул ошибку внутри «успешного» ответа, статуса нет */
+  status: number | null;
+  /** Причина от провайдера; ключ оператора обезличен в client.ts */
+  message: string;
+  /** Класс ошибки шлюза — по нему причина называется точно, а не по статусу */
+  errorType?: string;
+}
+
 export interface StructureAssistResult {
   mapping: ColumnMapping;
   /** Была ли реально задействована модель */
   aiUsed: boolean;
+  /** Отказ, который повтор не исправит (только удалённый провайдер) */
+  terminalError?: StructureTerminalError;
 }
 
 /** Деградация: помечаем эвристический результат причиной */
@@ -54,6 +79,11 @@ function degrade(mapping: ColumnMapping, reason: string): ColumnMapping {
     source: 'heuristic',
     reasoning: [...mapping.reasoning, `⚠ ${reason}`],
   };
+}
+
+/** Статус в скобках; у ошибки внутри «успешного» ответа статуса нет вовсе */
+function statusText(status: number | undefined): string {
+  return status === undefined ? '' : ` (HTTP ${status})`;
 }
 
 /** Валидация ответа модели; возвращает null при мусоре */
@@ -109,14 +139,17 @@ function validateAiResponse(
 
 /**
  * Главная функция: эвристика + AI → итоговый маппинг структуры.
+ *
+ * `config` — конфигурация модели конкретного запуска: локальная Ollama или
+ * удалённый профиль оператора. Пайплайн передаёт сюда ровно тот же конфиг,
+ * что и остальным стадиям.
  */
 export async function assistStructure(
   grid: Grid,
-  settings: Settings,
+  config: AiConfig,
   onProgress?: AiProgressCallback,
 ): Promise<StructureAssistResult> {
   const { analysis, mapping } = analyzeAndMap(grid);
-  const config = aiConfigFromSettings(settings);
 
   if (grid.length === 0) {
     return { mapping, aiUsed: false };
@@ -176,10 +209,46 @@ export async function assistStructure(
       aiUsed: true,
     };
   } catch (err) {
-    const reason =
-      err instanceof AiUnavailableError
+    // Отказ, который не лечится ни повтором, ни эвристикой, деградацией **не**
+    // является: пайплайн роняет задание сразу после этой стадии, и обещание
+    // «используется эвристика» было бы ложью ровно там, где ключ не заработает
+    // никогда. Текст шага поэтому зависит от `refusal`, а не от факта ошибки.
+    //
+    // Пояснение провайдера сюда намеренно не попадает: причина с кодом отказа уже
+    // названа в тексте ошибки и в шаге `failed`, а повтор статуса в детали сделал
+    // бы строку вида «(HTTP 403): HTTP 403».
+    const refusal =
+      config.provider === 'openrouter' && err instanceof AiUnavailableError && err.terminal
+        ? err
+        : null;
+    const reason = refusal
+      ? `Отказ удалённого провайдера${statusText(refusal.status)} — запуск прерывается, эвристика не подставляется.`
+      : err instanceof AiUnavailableError
         ? `Сервис AI недоступен (${err.detail ?? err.message}) — используется эвристика.`
         : 'Неизвестная ошибка AI — используется эвристика.';
-    return { mapping: degrade(mapping, reason), aiUsed: false };
+    const degraded: StructureAssistResult = {
+      mapping: degrade(mapping, reason),
+      aiUsed: false,
+    };
+
+    // Отвергнутый ключ, отсутствие денег и несуществующая модель не чинятся ни
+    // повтором, ни эвристикой: молчаливый отчёт по эвристикам выглядел бы
+    // успешным запуском на выбранной оператором модели. Поэтому такие ошибки
+    // идут дальше по цепочке, и пайплайн роняет задание с названной причиной.
+    //
+    // Локальная модель сюда не попадает: её отказ оператор чинит сам, и путь
+    // «посчитать эвристиками» для неё остаётся ровно прежним.
+    if (refusal) {
+      return {
+        ...degraded,
+        terminalError: {
+          status: refusal.status ?? null,
+          message: refusal.detail ?? refusal.message,
+          errorType: refusal.errorType,
+        },
+      };
+    }
+
+    return degraded;
   }
 }

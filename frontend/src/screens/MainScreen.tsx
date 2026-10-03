@@ -3,10 +3,11 @@ import { useCallback, useRef, useState } from 'react';
 import { MAX_FILE_SIZE_BYTES } from '@recon/shared';
 
 import { api, ApiError } from '../api';
-import type { CompareResult, DocumentData } from '../api';
+import type { AiDebugInfo, AiRequestProfile, CompareResult, DocumentData } from '../api';
 import { useEditableData, emptySlot } from '../hooks/useEditableData';
 import { DropZone } from '../components/DropZone';
 import { DebugCard } from '../components/DebugCard';
+import { AiDebugRows } from '../components/AiDebugRows';
 import { ContractBlock } from '../components/ContractBlock';
 import { EditableValue } from '../components/EditableValue';
 import { ComparisonCard } from '../components/ComparisonCard';
@@ -15,16 +16,80 @@ import { SwapIcon } from '../components/icons';
 const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
 
 interface Props {
-  /** Фактическая конфигурация backend (null, если недоступна) */
-  runtime?: import('../api').AiRuntimeInfo | null;
+  /**
+   * Профиль этого браузера. Обязательный, а не опциональный: забытый профиль
+   * отправил бы запрос на локальную модель молча, и оператор увидел бы успешный
+   * разбор, сделанный не той моделью, которую он выбрал.
+   */
+  profile: AiRequestProfile;
 }
 
-export default function MainScreen({ runtime }: Props) {
+/* --------------------------- Отказ и заглушка ---------------------------- */
+
+/**
+ * Отказ шлюза: сверки не было, и сервер не прислал её результата.
+ *
+ * Отдельное состояние, а не `comparison` с нулями: нули здесь никто не считал,
+ * а карточка выглядит как расчёт — ровно то, от чего отказывается
+ * `routes/compare.ts`, отдавая `502` без `CompareResult`.
+ */
+interface CompareRefusal {
+  /** Текст сервера, показывается дословно */
+  message: string;
+  debug: AiDebugInfo | null;
+}
+
+/**
+ * Сравнение не состоялось по причине, которую сервер не назвал отказом шлюза
+ * (тело запроса не разобрано, сеть отвалилась до маршрута). Карточка в этом
+ * случае остаётся: она прямо пишет «Сравнение недоступно.» и показывает сальдо,
+ * которое оператор видел и правил руками.
+ */
+function degradedComparison(a: DocumentData, b: DocumentData): CompareResult {
+  return {
+    summary: {
+      yourTotalRows: a.totalRows,
+      partnerTotalRows: b.totalRows,
+      yourOpeningBalance: a.openingBalance,
+      partnerOpeningBalance: b.openingBalance,
+      yourClosingBalance: a.closingBalance,
+      partnerClosingBalance: b.closingBalance,
+      yourTurnoverDebit: a.turnoverDebit ?? 0,
+      partnerTurnoverDebit: b.turnoverDebit ?? 0,
+      yourTurnoverCredit: a.turnoverCredit ?? 0,
+      partnerTurnoverCredit: b.turnoverCredit ?? 0,
+      openingMatch: Math.abs(a.openingBalance - b.openingBalance) < 0.02,
+      closingMatch: Math.abs(a.closingBalance - b.closingBalance) < 0.02,
+      debitMatch: Math.abs((a.turnoverDebit ?? 0) - (b.turnoverDebit ?? 0)) < 0.02,
+      creditMatch: Math.abs((a.turnoverCredit ?? 0) - (b.turnoverCredit ?? 0)) < 0.02,
+      openingDiff: b.openingBalance - a.openingBalance,
+      closingDiff: b.closingBalance - a.closingBalance,
+      debitDiff: (b.turnoverDebit ?? 0) - (a.turnoverDebit ?? 0),
+      creditDiff: (b.turnoverCredit ?? 0) - (a.turnoverCredit ?? 0),
+    },
+    matched: [],
+    onlyInYour: [],
+    onlyInPartner: [],
+    diffs: [],
+    finalBalance: { yourDebt: 0, partnerDebt: 0 },
+    aiAnalysis: 'Сравнение недоступно.',
+  };
+}
+
+/** Отказ шлюза: в теле ответа нет ни сравнения, ни подписи о модели */
+function isGatewayRefusal(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 502;
+}
+
+/* ------------------------------- Экран ----------------------------------- */
+
+export default function MainScreen({ profile }: Props) {
   const slotA = useEditableData();
   const slotB = useEditableData();
   const [overA, setOverA] = useState(false);
   const [overB, setOverB] = useState(false);
   const [comparison, setComparison] = useState<(CompareResult & { debug?: import('../api').AiDebugInfo }) | null>(null);
+  const [refusal, setRefusal] = useState<CompareRefusal | null>(null);
   const [comparing, setComparing] = useState(false);
   const inputRefA = useRef<HTMLInputElement>(null);
   const inputRefB = useRef<HTMLInputElement>(null);
@@ -51,7 +116,7 @@ export default function MainScreen({ runtime }: Props) {
     if (!slot.file) return;
     setSlot((s) => ({ ...s, busy: true, error: null, debugError: null }));
     try {
-      const res = await api.testAnalyze(slot.file);
+      const res = await api.testAnalyze(slot.file, profile);
       setSlot((s) => ({ ...s, result: res, data: structuredClone(res.result), busy: false }));
     } catch (err) {
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
@@ -62,7 +127,7 @@ export default function MainScreen({ runtime }: Props) {
         busy: false,
       }));
     }
-  }, []);
+  }, [profile]);
 
   const analyzeBoth = useCallback(async () => {
     await Promise.all([
@@ -77,44 +142,25 @@ export default function MainScreen({ runtime }: Props) {
     if (!a || !b) return;
 
     setComparing(true);
+    setRefusal(null);
     try {
-      const result = await api.compare(a, b);
+      const result = await api.compare(a, b, profile);
       setComparison(result);
     } catch (err) {
+      // Причина отказа показывается целиком: раньше `err.message` — названная
+      // причина, ради которой оператор останавливается, — терялась.
+      const message = err instanceof Error ? err.message : 'Не удалось выполнить сверку';
       const debug = err instanceof ApiError ? (err.debug ?? null) : null;
-      setComparison({
-        summary: {
-          yourTotalRows: a.totalRows,
-          partnerTotalRows: b.totalRows,
-          yourOpeningBalance: a.openingBalance,
-          partnerOpeningBalance: b.openingBalance,
-          yourClosingBalance: a.closingBalance,
-          partnerClosingBalance: b.closingBalance,
-          yourTurnoverDebit: a.turnoverDebit ?? 0,
-          partnerTurnoverDebit: b.turnoverDebit ?? 0,
-          yourTurnoverCredit: a.turnoverCredit ?? 0,
-          partnerTurnoverCredit: b.turnoverCredit ?? 0,
-          openingMatch: Math.abs(a.openingBalance - b.openingBalance) < 0.02,
-          closingMatch: Math.abs(a.closingBalance - b.closingBalance) < 0.02,
-          debitMatch: Math.abs((a.turnoverDebit ?? 0) - (b.turnoverDebit ?? 0)) < 0.02,
-          creditMatch: Math.abs((a.turnoverCredit ?? 0) - (b.turnoverCredit ?? 0)) < 0.02,
-          openingDiff: b.openingBalance - a.openingBalance,
-          closingDiff: b.closingBalance - a.closingBalance,
-          debitDiff: (b.turnoverDebit ?? 0) - (a.turnoverDebit ?? 0),
-          creditDiff: (b.turnoverCredit ?? 0) - (a.turnoverCredit ?? 0),
-        },
-        matched: [],
-        onlyInYour: [],
-        onlyInPartner: [],
-        diffs: [],
-        finalBalance: { yourDebt: 0, partnerDebt: 0 },
-        aiAnalysis: 'Сравнение недоступно.',
-        debug: debug ?? undefined,
-      });
+      setRefusal({ message, debug });
+      if (isGatewayRefusal(err)) {
+        setComparison(null);
+        return;
+      }
+      setComparison({ ...degradedComparison(a, b), debug: debug ?? undefined });
     } finally {
       setComparing(false);
     }
-  }, [slotA.slot.data, slotB.slot.data]);
+  }, [slotA.slot.data, slotB.slot.data, profile]);
 
   return (
     <div>
@@ -166,14 +212,12 @@ export default function MainScreen({ runtime }: Props) {
           slot={slotA.slot}
           label="А"
           updaters={slotA}
-          runtime={runtime}
           onRetry={() => analyzeSlot(slotA.slot, slotA.setSlot)}
         />
         <ResultColumn
           slot={slotB.slot}
           label="Б"
           updaters={slotB}
-          runtime={runtime}
           onRetry={() => analyzeSlot(slotB.slot, slotB.setSlot)}
         />
       </div>
@@ -188,7 +232,15 @@ export default function MainScreen({ runtime }: Props) {
         </div>
       )}
 
-      {/* Comparison result */}
+      {/* Сравнение: карточка только там, где расчёт действительно был. Отказ шлюза
+          показывается причиной и диагностикой — карточки нет, потому что сверки
+          не было, и нули в ней означали бы несуществующий расчёт. */}
+      {refusal && (
+        <>
+          <div className="banner banner-error mt-3">{refusal.message}</div>
+          {refusal.debug && <DebugCard debug={refusal.debug} />}
+        </>
+      )}
       {comparison && <ComparisonCard comparison={comparison} />}
     </div>
   );
@@ -211,10 +263,9 @@ interface ResultColumnProps {
   label: string;
   updaters: SlotUpdaters;
   onRetry: () => void;
-  runtime?: import('../api').AiRuntimeInfo | null;
 }
 
-function ResultColumn({ slot, label, updaters, onRetry, runtime }: ResultColumnProps) {
+function ResultColumn({ slot, label, updaters, onRetry }: ResultColumnProps) {
   if (slot.busy) {
     return (
       <div className="result-column">
@@ -248,12 +299,7 @@ function ResultColumn({ slot, label, updaters, onRetry, runtime }: ResultColumnP
 
   return (
     <div className="result-column">
-      <ResultCard
-        slot={slot}
-        label={label}
-        updaters={updaters}
-        runtime={runtime}
-      />
+      <ResultCard slot={slot} label={label} updaters={updaters} />
     </div>
   );
 }
@@ -264,10 +310,9 @@ interface ResultCardProps {
   slot: import('../hooks/useEditableData').FileSlot;
   label: string;
   updaters: SlotUpdaters;
-  runtime?: import('../api').AiRuntimeInfo | null;
 }
 
-function ResultCard({ slot, label, updaters, runtime }: ResultCardProps) {
+function ResultCard({ slot, label, updaters }: ResultCardProps) {
   const data = slot.data!;
   const d = slot.debugError;
 
@@ -340,12 +385,7 @@ function ResultCard({ slot, label, updaters, runtime }: ResultCardProps) {
         <details>
           <summary>Диагностика AI</summary>
           <div className="details-code-panel">
-            <div><strong>Модель:</strong> {d.model}</div>
-            {runtime && <div><strong>Провайдер:</strong> Ollama (локально)</div>}
-            <div><strong>HTTP статус:</strong> {d.httpStatus ?? '---'}</div>
-            <div><strong>Попыток:</strong> {d.attempts}</div>
-            <div><strong>Длина ответа:</strong> {d.contentLength} символов</div>
-            <div><strong>Ошибка:</strong> {d.errorMessage ?? '---'}</div>
+            <AiDebugRows debug={d} />
             {d.rawPreview && (
               <pre className="details-pre">
                 {d.rawPreview}

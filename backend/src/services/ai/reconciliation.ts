@@ -319,11 +319,23 @@ export async function fullReconciliation(
       result.aiAnalysis = text;
       return { result, debug };
     } catch (err) {
+      // Отказ, который не лечится ни повтором, ни расчётом без модели:
+      // режим «Быстро» показывает пользователю отчёт, и «AI-анализ
+      // недоступен» среди результатов выглядел бы обычным ответом. Такой
+      // отказ удалённого провайдера идёт наружу, чтобы маршрут сообщил о нём
+      // ошибкой с названной причиной. Локальная модель деградирует как прежде.
+      if (config.provider === 'openrouter' && err instanceof AiUnavailableError && err.terminal) {
+        throw err;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       const detail = err instanceof Error && 'detail' in err ? (err as { detail?: unknown }).detail : undefined;
       console.error('[reconciliation] AI analysis failed:', msg, detail ?? '');
       result.aiAnalysis = 'AI-анализ недоступен.';
-      return { result };
+      // Причина отказа уходит вместе с карточкой: без неё «AI-анализ
+      // недоступен.» неотличим от обычного результата, и оператор гадает,
+      // почему шлюз не ответил. Ключа в `debug` нет — клиент обезличил его
+      // до того, как ошибка сюда дошла.
+      return { result, debug: err instanceof AiUnavailableError ? err.debug : undefined };
     }
   }
 

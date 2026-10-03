@@ -9,6 +9,7 @@ import {
   COMBINABLE_FIELD_PAIR,
   JOB_TTL_MS,
   MAX_ACTIVE_JOBS,
+  type AiProvider,
   type ColumnMapping,
   type ConfirmPayload,
   type JobStage,
@@ -19,6 +20,20 @@ import {
   type ReconciliationReport,
   type SideRole,
 } from '@recon/shared';
+
+/**
+ * Модель, обслуживающая этот запуск: провайдер и идентификатор, выбранные
+ * оператором в этом браузере.
+ *
+ * API-ключа здесь нет и быть не должно: `runPipeline` держит полный конфиг в
+ * своём замыкании всё время жизни задания, а `toStatus` — строгий белый
+ * список полей, уходящий в HTTP-ответ. Ключ рядом с ними расширял бы радиус
+ * поражения без единой функциональной выгоды.
+ */
+export interface JobAiProfile {
+  provider: AiProvider;
+  model: string;
+}
 
 export interface Job {
   id: string;
@@ -41,6 +56,17 @@ export interface Job {
   createdAt: number;
   /** Пользователь запросил двухсторонний парсинг PDF */
   twoSidedRequested: boolean;
+  /** Модель этого запуска; null — профиль не передан, локальная модель по умолчанию */
+  aiProfile: JobAiProfile | null;
+  /**
+   * Модель, которая **реально ответила** на вызовы этого запуска; null — пока
+   * не ответила ни одна.
+   *
+   * Отдельное поле, а не `aiProfile.model`: то, что оператор выбрал, известно с
+   * момента создания задания и не меняется до конца, а подписать им отчёт,
+   * который считала другая (или никто), — значит соврать в самом важном месте.
+   */
+  effectiveModel: string | null;
 }
 
 const jobs = new Map<string, Job>();
@@ -58,6 +84,7 @@ export function createJob(
   files: { ours: string; partner: string },
   buffers: { ours: Buffer; partner: Buffer },
   twoSidedRequested = false,
+  aiProfile: JobAiProfile | null = null,
 ): Job {
   if (jobs.size >= MAX_ACTIVE_JOBS) {
     throw new Error('Превышен лимит одновременных заданий. Попробуйте позже.');
@@ -83,6 +110,8 @@ export function createJob(
     confirmResolver: null,
     createdAt: Date.now(),
     twoSidedRequested,
+    aiProfile,
+    effectiveModel: null,
   };
   jobs.set(job.id, job);
 
@@ -114,6 +143,12 @@ export function toStatus(job: Job): JobStatus {
     reportReady: job.reportReady,
     reasoningLog: job.reasoningLog,
     files: job.files,
+    // Только ответившая модель: `aiProfile.model` — это запрос, а не обработка
+    effectiveModel: job.effectiveModel,
+    // Запрошенная — отдельной строкой: при подмене модели на стороне шлюза это
+    // единственное место, где различие видно. Ключа здесь нет — в `JobAiProfile`
+    // такого поля не существует.
+    requestedModel: job.aiProfile?.model ?? null,
   };
 }
 

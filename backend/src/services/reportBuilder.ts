@@ -11,6 +11,7 @@ import Decimal from 'decimal.js';
 
 import { formatMoney } from '@recon/shared';
 import type {
+  AiProvider,
   BalanceCheck,
   FinalBalance,
   Hypothesis,
@@ -33,6 +34,13 @@ export interface ReportBuildInput {
   hypothesesAi: Hypothesis[] | null;
   /** Таймлайн «Логики AI», накопленный пайплайном до стадии analysis */
   aiLogic: ReasoningStep[];
+  /**
+   * Провайдер запуска, если работал удалённый. Не задан — считаем, что отчёт
+   * собрала локальная модель, и в него не попадает ни модель, ни провайдер.
+   */
+  provider?: AiProvider;
+  /** Идентификатор модели запуска; в отчёт попадает только вместе с provider */
+  model?: string;
 }
 
 const BALANCE_LABELS: Record<BalanceCheck['key'], string> = {
@@ -206,6 +214,14 @@ export function buildReport(input: ReportBuildInput): ReconciliationReport {
 
   const aiLogic: ReasoningStep[] = [...input.aiLogic, hypothesisSteps(input)];
 
+  // Подпись о том, чьей моделью обработан документ. Только удалённый провайдер:
+  // локальный отчёт получает третью сторону, которой не было. Ключа здесь быть
+  // не может по определению — в модель и провайдер он не входит.
+  const attribution: { model?: string; provider?: AiProvider } =
+    input.provider === 'openrouter' && input.model !== undefined
+      ? { model: input.model, provider: input.provider }
+      : {};
+
   return {
     id: input.jobId,
     createdAt: new Date().toISOString(),
@@ -229,5 +245,6 @@ export function buildReport(input: ReportBuildInput): ReconciliationReport {
     finalBalance: finalBalance(core),
     hypotheses,
     aiLogic,
+    ...attribution,
   };
 }

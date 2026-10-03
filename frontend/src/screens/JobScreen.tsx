@@ -5,6 +5,9 @@ import { MAPPING_FIELD_LABELS, REQUIRED_FIELDS } from '@recon/shared';
 import type { ConfirmPayload, JobStage, JobStatus, MappingFieldKey } from '@recon/shared';
 
 import { api, ApiError, apiUrl } from '../api';
+import type { AiRequestProfile, AiRuntimeInfo } from '../api';
+import { providerLabel } from '../hooks/useAiModelBadge';
+import type { ActiveAiModel } from '../hooks/useAiModelBadge';
 import { DropZone } from '../components/DropZone';
 
 const MAX_MB = Math.round(MAX_FILE_SIZE_BYTES / (1024 * 1024));
@@ -29,10 +32,19 @@ const STAGE_LABELS: Record<JobStage, string> = {
 const PAUSED_STAGES: JobStage[] = ['awaiting_confirmation', 'done', 'failed', 'cancelled'];
 
 interface Props {
-  runtime?: import('../api').AiRuntimeInfo | null;
+  runtime?: AiRuntimeInfo | null;
+  /**
+   * Профиль этого браузера: уходит в `createJob` и больше никуда. Показывать его
+   * нельзя — в нём секрет, поэтому в разметку попадает только `activeModel`.
+   */
+  profile: AiRequestProfile;
+  /** Модель, которая уйдёт в следующий запуск, — без ключа */
+  activeModel: ActiveAiModel;
+  /** Сообщает вверх, какую модель применило задание: этим двигается значок в шапке */
+  onEffectiveModel?: (model: string | null) => void;
 }
 
-export default function JobScreen({ runtime }: Props) {
+export default function JobScreen({ runtime, profile, activeModel, onEffectiveModel }: Props) {
   const [ours, setOurs] = useState<File | null>(null);
   const [partner, setPartner] = useState<File | null>(null);
   const [twoSided, setTwoSided] = useState(false);
@@ -106,7 +118,7 @@ export default function JobScreen({ runtime }: Props) {
     setFatal(null);
     setStatus(null);
     try {
-      const created = await api.createJob(ours, partner, twoSided);
+      const created = await api.createJob(ours, partner, twoSided, profile);
       jobIdRef.current = created.id;
       startedAtRef.current = Date.now();
       lastChangeRef.current = Date.now();
@@ -118,7 +130,7 @@ export default function JobScreen({ runtime }: Props) {
     } finally {
       setStarting(false);
     }
-  }, [ours, partner, twoSided, poll]);
+  }, [ours, partner, twoSided, profile, poll]);
 
   const confirm = useCallback(
     async (payload: ConfirmPayload) => {
@@ -163,6 +175,25 @@ export default function JobScreen({ runtime }: Props) {
   /* ---------------------------------- Вид ---------------------------------- */
 
   const running = status !== null && !PAUSED_STAGES.includes(status.stage);
+
+  /* --------------- Что применяет это задание, а не текущий профиль ---------- */
+
+  const effectiveModel = status?.effectiveModel ?? null;
+
+  // Значок в шапке обязан называть модель задания: правка профиля посреди работы
+  // не должна переименовывать уже запущенный запуск. Отчёт идёт наверх и при
+  // сбросе (effectiveModel становится null), поэтому отдельного вызова в reset
+  // не нужно — состояние само выведет подпись обратно на профиль.
+  useEffect(() => {
+    onEffectiveModel?.(effectiveModel);
+  }, [effectiveModel, onEffectiveModel]);
+
+  // Размонтирование тоже сбрасывает: задание продолжает идти на сервере, а значок
+  // не должен называть модель, которой на экране уже никто не видит.
+  useEffect(() => {
+    if (onEffectiveModel === undefined) return;
+    return () => onEffectiveModel(null);
+  }, [onEffectiveModel]);
 
   /* -------------------- Таймер «прошло» и пульсация ----------------------- */
 
@@ -253,6 +284,9 @@ export default function JobScreen({ runtime }: Props) {
           </div>
 
           <p className="muted job-message" key={status.message}>{status.message}</p>
+          <p className="muted mt-2">
+            Модель запуска: {effectiveModel ?? `запрошено ${activeModel.model ?? '—'}, ещё не ответила`}
+          </p>
 
           {status.error && <div className="banner banner-error">{status.error}</div>}
           {fatal && <div className="banner banner-error">{fatal}</div>}
@@ -265,10 +299,21 @@ export default function JobScreen({ runtime }: Props) {
             />
           )}
 
+          <AiDiagnostics
+            runtime={runtime ?? null}
+            effectiveModel={effectiveModel}
+            requestedModel={status.requestedModel ?? null}
+          />
+
           {status.stage === 'done' && status.reportReady && <ReportLinks id={status.id} />}
 
+          {/* Причина обрыва — в самом отчёте, и по нажатию её не спрятать в
+              свёрнутый блок: оператору нужен этот шаг, а не охота за ним.
+              `open`, а не `defaultOpen`: у `<details>` в типах React нет второго
+              (это атрибут `<input>`). Пока значение не меняется, React в DOM не
+              пишет — свёрнуть обратно оператор может. */}
           {status.reasoningLog.length > 0 && (
-            <details>
+            <details open={status.stage === 'failed' || status.stage === 'cancelled'}>
               <summary>Ход работы ({status.reasoningLog.length})</summary>
               <ul className="job-log">
                 {status.reasoningLog.map((step) => (
@@ -296,6 +341,57 @@ export default function JobScreen({ runtime }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+/* ----------------------------- Диагностика AI ----------------------------- */
+
+interface AiDiagnosticsProps {
+  /** Настройки сервера: чем считалось бы задание без сохранённого профиля */
+  runtime: AiRuntimeInfo | null;
+  /** Модель, обслужившая этот запуск; null — пока неизвестна */
+  effectiveModel: string | null;
+  /** Модель, запрошенная для этого запуска; null — запуска на локальной модели */
+  requestedModel: string | null;
+}
+
+/**
+ * Три строки о том, кто считал, — на том же месте и в том же виде, что
+ * диагностика в «Быстром» режиме.
+ *
+ * Ответившая и запрошенная модели — **разные строки**, и различие между ними
+ * обязано быть видимым: подставлять запрошенную на место ответившей значило бы
+ * показать модели имя того, кто этого запуска не считал, — ровно то, чего ждёт
+ * оператор от подписи. Запрошенная берётся из задания (`JobStatus`), а не из
+ * значка в шапке: тот по правилам `useAiModelBadge` отдаёт ответившую модель,
+ * и обе строки стали бы одинаковыми — то есть подмена на стороне шлюза стала
+ * бы незаметной. Упавшее на первом вызове задание обязано выглядеть как
+ * задание без модели, а не как задание на выбранной модели.
+ *
+ * Провайдер задания здесь не назван намеренно: `JobStatus` несёт только имя
+ * модели, а догадываться по имени («в идентификаторе есть слэш — значит OpenRouter»)
+ * значило бы подписать чужую обработку чужим провайдером.
+ */
+function AiDiagnostics({ runtime, effectiveModel, requestedModel }: AiDiagnosticsProps) {
+  return (
+    <details className="mt-3">
+      <summary>Диагностика AI</summary>
+      <div className="details-code-panel">
+        <div>
+          <strong>Ответила модель:</strong> {effectiveModel ?? 'ещё не ответила'}
+        </div>
+        <div>
+          <strong>Запрошено для запуска:</strong> {requestedModel ?? '---'}
+        </div>
+        <div>
+          <strong>Локальная модель сервера:</strong> {runtime?.model ?? '---'}
+        </div>
+        <div>
+          <strong>Провайдер по умолчанию:</strong>{' '}
+          {runtime === null ? '---' : providerLabel(runtime.provider)}
+        </div>
+      </div>
+    </details>
   );
 }
 

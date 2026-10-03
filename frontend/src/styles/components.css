@@ -277,7 +277,7 @@
   justify-content: center;
   cursor: pointer;
   box-shadow: var(--shadow-md);
-  opacity: 0;
+  opacity: 0.7;
   transition: opacity var(--duration-fast) var(--ease-out),
               background var(--duration-fast) var(--ease-out),
               color var(--duration-fast) var(--ease-out),
@@ -292,6 +292,28 @@
   box-shadow: var(--shadow-lg);
 }
 
+/*
+ * GAP-25: `.page` ограничена 1040px, поэтому на экранах уже этой ширины кнопка,
+ * закреплённая за правым краем окна, накрывала значок модели — единственный
+ * способ узнать, что реально применяется.
+ *
+ * Порог посчитан, а не взят из плана: пока окно шире `1040 + 2 × 32` отступов
+ * страницы, кнопка (20px от края плюс 44px) стоит правее самой страницы, и
+ * пересечения нет. Равенство с восемью пикселями запаса сходится на 1184px —
+ * округлено до 1200, чтобы запас был вдвое больше.
+ *
+ * Ниже порога кнопка встаёт под значок, а не поверх него: шапка на узком экране
+ * занимает 32–40px сверху, а значок в ней — до 42px в две строки, поэтому
+ * 88px сверху гарантированно ниже обоих. С переключателем режимов, который
+ * всегда слева и уже 205px, кнопка не пересекается ни при какой ширине, а до
+ * кнопки запуска внизу не достаёт вовсе.
+ */
+@media (max-width: 1199px) {
+  .settings-fab {
+    top: calc(var(--sp-12) + var(--sp-10));
+  }
+}
+
 /* ---- Modal ---- */
 
 .modal-overlay {
@@ -303,6 +325,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* На узком экране панель упиралась в края окна; на широком `max-width` панели
+     делает отступ незаметным */
+  padding: var(--sp-4);
   animation: fadeIn var(--duration-fast) var(--ease-out);
 }
 
@@ -426,12 +451,77 @@
   border-color: var(--accent);
 }
 
+/*
+ * Поля окна настроек модели. Классы `.modal-model-*` — это список готовых
+ * вариантов с переключателем, поэтому подписи, поле ключа с кнопкой «Показать»
+ * и строка подсказки своего класса в репозитории не имели.
+ */
+
+.modal-label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-secondary);
+}
+
+.modal-key-row {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.modal-key-row .modal-custom-input {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+
+.modal-reveal {
+  flex: none;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+
+.modal-reveal:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.modal-hint {
+  margin-top: var(--sp-1);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.modal-model-option.is-disabled,
+.modal-model-option.is-disabled:hover {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: none;
+}
+
+/* Кнопка удаления ключа прижата к правому краю баннера, а её отступ снизу от `.btn-xs` здесь лишний */
+.modal-body .btn-xs {
+  margin: 0 0 0 auto;
+}
+
 .modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5);
   border-top: 1px solid var(--line);
+  flex-wrap: wrap;
 }
 
 @keyframes fadeIn {

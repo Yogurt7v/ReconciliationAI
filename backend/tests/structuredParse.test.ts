@@ -5,20 +5,44 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { AiUnavailableError, aiConfigFromRemoteProfile } from '../src/services/ai/client.js';
 import { looksTwoSided, parseTwoSidedPdf } from '../src/services/ai/structuredParse.js';
 import type { AiConfig } from '../src/services/ai/client.js';
 
 const CFG: AiConfig = {
+  provider: 'ollama',
   baseUrl: 'http://127.0.0.1:11434/v1/chat/completions',
   model: 'm',
   timeoutMs: 30_000,
 };
+
+const SECRET = 'sk-or-v1-structured-0123456789';
+
+const REMOTE: AiConfig = aiConfigFromRemoteProfile({
+  provider: 'openrouter',
+  baseUrl: 'http://127.0.0.1:11434/v1/chat/completions',
+  model: 'vendor/model:free',
+  apiKey: SECRET,
+  timeoutMs: 30_000,
+});
 
 function mockFetchJson(response: unknown): ReturnType<typeof vi.fn> {
   return vi.fn().mockResolvedValue(
     new Response(
       JSON.stringify({ choices: [{ message: { content: JSON.stringify(response) } }] }),
       { status: 200 },
+    ),
+  );
+}
+
+/** Ответ шлюза, который отказывает и называет класс ошибки */
+function mockRejected(status: number, errorType: string): ReturnType<typeof vi.fn> {
+  return vi.fn().mockImplementation(() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({ error: { message: 'Invalid API key', metadata: { error_type: errorType } } }),
+        { status },
+      ),
     ),
   );
 }
@@ -168,6 +192,63 @@ describe('parseTwoSidedPdf', () => {
 
     const result = await parseTwoSidedPdf(CFG, 'текст', 'f.pdf');
     expect(result).toBeNull();
+  });
+
+  /* --- Отказ провайдера: удалённый падает, локальный деградирует --- */
+
+  it('удалённый: 401 пробрасывается наружу, а не прячется в null', async () => {
+    const fetchMock = mockRejected(401, 'authentication_error');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(parseTwoSidedPdf(REMOTE, 'текст', 'f.pdf')).rejects.toBeInstanceOf(
+      AiUnavailableError,
+    );
+    // Ровно один запрос: пайплайн больше не сделает вторую, одинаково
+    // отвергаемую попытку разобрать тот же акт
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('удалённый: 200 с ошибкой без статуса тоже терминальная', async () => {
+    const fetchMock = mockRejected(200, 'payment_required');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(parseTwoSidedPdf(REMOTE, 'текст', 'f.pdf')).rejects.toBeInstanceOf(
+      AiUnavailableError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('удалённый: таймаут/429 → null, деградация как прежде', async () => {
+    const fetchMock = mockRejected(429, 'rate_limit_exceeded');
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await parseTwoSidedPdf(REMOTE, 'текст', 'f.pdf');
+    expect(result).toBeNull();
+  });
+
+  it('локальная модель: тот же 401 → null, поведение не меняется', async () => {
+    vi.stubGlobal('fetch', mockRejected(401, 'authentication_error'));
+
+    const result = await parseTwoSidedPdf(CFG, 'текст', 'f.pdf');
+    expect(result).toBeNull();
+  });
+
+  it('в ошибку удалённого провайдера не попадает ключ оператора', async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: { message: `Invalid key: ${SECRET}`, metadata: { error_type: 'authentication_error' } },
+          }),
+          { status: 401 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await parseTwoSidedPdf(REMOTE, 'текст', 'f.pdf').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AiUnavailableError);
+    expect(JSON.stringify(err)).not.toContain(SECRET);
   });
 
   it('строки без данных пропускаются', async () => {

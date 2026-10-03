@@ -1,0 +1,48 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "Reconciliation AI" [level=1] [ref=e6]
+      - paragraph [ref=e7]: Сверка актов сверки с контрагентами
+    - generic "Локальная модель из settings.txt." [ref=e8]: "Модель: qwen2.5:7b-instruct"
+  - button "Настройки модели" [active] [ref=e9] [cursor=pointer]
+  - dialog [ref=e40]:
+    - generic [ref=e41]:
+      - heading "Модель и ключ" [level=2] [ref=e42]
+      - button "Закрыть" [ref=e43] [cursor=pointer]
+    - generic [ref=e47]:
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - radio "Локальная модель Ollama qwen2.5:7b-instruct" [checked] [disabled] [ref=e50]
+          - generic [ref=e51]:
+            - generic [ref=e52]: Локальная модель Ollama
+            - generic [ref=e53]: qwen2.5:7b-instruct
+        - generic [ref=e54] [cursor=pointer]:
+          - radio "OpenRouter — удалённый шлюз идентификатор вводится ниже" [ref=e55]
+          - generic [ref=e56]:
+            - generic [ref=e57]: OpenRouter — удалённый шлюз
+            - generic [ref=e58]: идентификатор вводится ниже
+      - generic [ref=e59]: "Ollama недоступна по адресу http://localhost:11434 (fetch failed). Запустите её: откройте Ollama на этом компьютере (или выполните «ollama serve»). Без модели приложение продолжит работу, но будет использовать только эвристики."
+    - generic [ref=e60]:
+      - button "Вернуться к локальной модели" [ref=e61] [cursor=pointer]
+      - button "Отмена" [ref=e62] [cursor=pointer]
+      - button "Сохранить" [ref=e63] [cursor=pointer]
+  - tablist [ref=e13]:
+    - tab "Сверка" [selected] [ref=e14] [cursor=pointer]
+    - tab "Быстро" [ref=e15] [cursor=pointer]
+  - generic [ref=e16]:
+    - generic [ref=e17]:
+      - heading "Сверка актов" [level=2] [ref=e18]
+      - paragraph [ref=e19]: "Полный разбор с распознаванием сканов: определяется структура таблицы, извлекаются документы, выполняется сверка и строится отчёт."
+    - generic [ref=e20]:
+      - button "Наш файл Перетащите файл или нажмите" [ref=e21] [cursor=pointer]:
+        - generic [ref=e25]: Наш файл
+        - generic [ref=e26]: Перетащите файл или нажмите
+      - button "Файл контрагента Перетащите файл или нажмите" [ref=e27] [cursor=pointer]:
+        - generic [ref=e31]: Файл контрагента
+        - generic [ref=e32]: Перетащите файл или нажмите
+    - generic [ref=e33] [cursor=pointer]:
+      - checkbox "У контрагента двухсторонний акт (обе стороны в одном PDF)" [ref=e34]
+      - generic [ref=e35]: У контрагента двухсторонний акт (обе стороны в одном PDF)
+    - generic [ref=e36]:
+      - generic [ref=e37]: XLSX или PDF, до 50 МБ
+      - button "Начать сверку" [disabled] [ref=e38]

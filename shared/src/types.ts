@@ -238,6 +238,13 @@ export interface ReconciliationReport {
   finalBalance: FinalBalance;
   hypotheses: Hypothesis[];
   aiLogic: ReasoningStep[];
+  /**
+   * Модель, обработавшая документ, и провайдер. Заполняются только когда
+   * работал удалённый провайдер, чтобы получатель отчёта видел, что документ
+   * обрабатывала третья сторона. Не заполнено — считаем, что работал локальный Ollama.
+   */
+  model?: string;
+  provider?: AiProvider;
 }
 
 /* ------------------------------ Задания (jobs) ---------------------------- */
@@ -273,6 +280,18 @@ export interface JobStatus {
   reportReady: boolean;
   reasoningLog: ReasoningStep[];
   files: { ours: string; partner: string };
+  /**
+   * Модель, которая реально обслужила текущий запуск. null — модель ещё не
+   * отвечала или не сообщила своё имя.
+   */
+  effectiveModel?: string | null;
+  /**
+   * Модель, которую оператор выбрал для этого запуска. Известна с момента
+   * создания задания и не меняется до конца — в отличие от `effectiveModel`,
+   * поэтому расхождение между ними и есть признак подмены на стороне шлюза.
+   * null — профиль не передан, запуск на локальной модели из settings.txt.
+   */
+  requestedModel?: string | null;
 }
 
 /** Тело POST /mapping — скорректированный пользователем маппинг */
@@ -290,6 +309,12 @@ export interface AiStructuredResult {
   raw: unknown;
 }
 
+/**
+ * Провайдер AI: локальный Ollama или удалённый OpenRouter. Единое имя для
+ * backend'овского union в client.ts и для типов, которые провайдера показывают.
+ */
+export type AiProvider = 'ollama' | 'openrouter';
+
 /** Диагностическая информация о вызове AI */
 export interface AiDebugInfo {
   model: string;
@@ -298,6 +323,22 @@ export interface AiDebugInfo {
   errorMessage: string | null;
   rawPreview: string | null;
   attempts: number;
+  /** Провайдер, который обслужил вызов. Не задан — вызов шёл по локальному пути */
+  provider?: AiProvider;
+  /**
+   * Модель, которая реально ответила. Отличается от `model`: шлюз может
+   * выполнить запрос другой моделью, и интерфейс обязан показывать именно её.
+   * null — ответ не дал имени модели.
+   */
+  effectiveModel?: string | null;
+  /**
+   * Расход токенов по ответу провайдера (`usage.total_tokens`). null — провайдер
+   * не сообщил; это не то же самое, что 0.
+   *
+   * Только число: арифметики по деньгам здесь нет и быть не должно — цену
+   * меняет провайдер, и любое число в интерфейсе быстро станет ложью.
+   */
+  totalTokens?: number | null;
 }
 
 /** Результат AI-сравнения двух актов сверки */

@@ -6,6 +6,8 @@
  *  POST /api/compare       — сверка двух распознанных документов
  *  GET  /api/health        — фактически применяемая модель
  *  /api/jobs*              — полный пайплайн сверки (см. routes/jobs.ts)
+ *  /api/ai/verify          — бесплатная проверка ключа и модели (routes/jobs.ts)
+ *  /api/ollama/status      — доступность локальной модели (routes/jobs.ts)
  *  GET  /config.js         — рантайм-конфигурация для фронтенда
  *  GET  /*                 — статика frontend/dist с SPA-fallback
  *
@@ -33,8 +35,9 @@ import { rateLimiter } from './rateLimit.js';
 import { loadSettings } from './settings.js';
 import { aiConfigFromSettings, type AiConfig } from './services/ai/client.js';
 import { testAnalyze } from './services/ai/testAnalyze.js';
-import { fullReconciliation } from './services/ai/reconciliation.js';
-import { registerJobRoutes } from './routes/jobs.js';
+import { registerJobRoutes, resolveRequestAiConfig } from './routes/jobs.js';
+import { runCompare } from './routes/compare.js';
+import { analyzeFailure } from './routes/analyze.js';
 import { checkOllama, describeOllama, openBrowser } from './preflight.js';
 
 const settings = loadSettings();
@@ -176,6 +179,8 @@ async function readUploadFile(part: unknown): Promise<UploadedFile> {
 
 app.post('/api/test/analyze', async (req, reply) => {
   let uploaded: UploadedFile | null = null;
+  let aiModel: unknown;
+  let aiApiKey: unknown;
 
   for await (const part of req.parts()) {
     if (part.type === 'file' && part.fieldname === 'file') {
@@ -188,6 +193,10 @@ app.post('/api/test/analyze', async (req, reply) => {
             : 'Не удалось прочитать файл.';
         return reply.code(413).send({ error: message });
       }
+    } else if (part.type === 'field' && part.fieldname === 'aiModel') {
+      aiModel = part.value;
+    } else if (part.type === 'field' && part.fieldname === 'aiApiKey') {
+      aiApiKey = part.value;
     }
   }
 
@@ -195,8 +204,18 @@ app.post('/api/test/analyze', async (req, reply) => {
     return reply.code(400).send({ error: 'Поле file обязательно.' });
   }
 
+  // Профиль модели — на каждый запрос, а не из настроек при старте процесса:
+  // два браузера на одной машине (APP_HOST=0.0.0.0) обязаны считать разными
+  // моделями. Отказ профиля — 400 с названной причиной, а не тихий возврат к
+  // локальной модели: оператор верит, что выбрал шлюз. Проверка идёт до разбора
+  // файла — неверный профиль не должен стоить времени парсинга.
   const problem = validateFile(uploaded);
   if (problem) return reply.code(400).send({ error: problem });
+
+  const ai = resolveRequestAiConfig({ aiModel, aiApiKey }, settings);
+  if (!ai.ok) {
+    return reply.code(400).send({ error: ai.message, reason: ai.reason });
+  }
 
   const ext = uploaded.filename.toLowerCase();
   let source;
@@ -227,7 +246,7 @@ app.post('/api/test/analyze', async (req, reply) => {
   }
 
   try {
-    const { result, warnings, debug } = await testAnalyze(source.grid, aiConfig);
+    const { result, warnings, debug } = await testAnalyze(source.grid, ai.config);
     return reply.send({
       fileName: uploaded.filename,
       sourceKind: source.kind,
@@ -238,11 +257,11 @@ app.post('/api/test/analyze', async (req, reply) => {
       debug,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Неизвестная ошибка AI';
-    const detail = err instanceof Error && 'detail' in err ? (err as { detail?: unknown }).detail : undefined;
-    const debug = err instanceof Error && 'debug' in err ? (err as { debug?: unknown }).debug : undefined;
-    const fullMessage = detail ? `${message} (${detail})` : message;
-    return reply.code(502).send({ error: `AI-анализ не удался: ${fullMessage}`, debug });
+    // Сборка ответа — в `analyzeFailure`, как у `runCompare` ниже: хендлер живёт в
+    // модуле, который запускает сервер, поэтому формулировку отказа шлюза
+    // отсюда нечем проверить.
+    const failure = analyzeFailure(ai.config, err);
+    return reply.code(failure.statusCode).send(failure.body);
   }
 });
 
@@ -264,6 +283,8 @@ app.get('/api/health', async () => {
 interface CompareBody {
   ours: import('./services/ai/testAnalyze.js').DocumentData;
   partner: import('./services/ai/testAnalyze.js').DocumentData;
+  aiModel?: string;
+  aiApiKey?: string;
 }
 
 app.post('/api/compare', async (req, reply) => {
@@ -278,25 +299,25 @@ app.post('/api/compare', async (req, reply) => {
     return reply.code(400).send({ error: 'Поля "ours" и "partner" обязательны.' });
   }
 
-  try {
-    const { result, debug } = await fullReconciliation(ours, partner, aiConfig);
-    return reply.send({ ...result, debug });
-  } catch (err) {
-    console.error('[api/compare] Reconciliation failed:', err);
-    app.log.warn(err, 'Reconciliation failed');
-    const { result } = await fullReconciliation(ours, partner);
-    return reply.send({
-      ...result,
-      debug: {
-        model: aiConfig.model,
-        errorMessage: err instanceof Error ? err.message : String(err),
-      },
-    });
+  const ai = resolveRequestAiConfig(
+    { aiModel: body.aiModel, aiApiKey: body.aiApiKey },
+    settings,
+  );
+  if (!ai.ok) {
+    return reply.code(400).send({ error: ai.message, reason: ai.reason });
   }
+
+  // Вся сборка ответа — в `runCompare`: там ровно один платный вызов на
+  // AI-вызов, отказ шлюза становится 502 с названной причиной, а запасной
+  // расчёт правилами идёт без конфига и в шлюз не возвращается.
+  const outcome = await runCompare(ours, partner, ai.config);
+  return reply.code(outcome.statusCode).send(outcome.body);
 });
 
 /* ------------------------------ Пайплайн сверки -------------------------- */
 
+// Регистрация маршрутов пайплайна; вместе с ними приходят /api/ai/verify и
+// /api/ollama/status — обе проверки подключения тоже читают settings.
 await registerJobRoutes(app, settings);
 
 /* ---------------------------------- Старт --------------------------------- */

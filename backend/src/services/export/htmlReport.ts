@@ -50,6 +50,17 @@ function fmtDateTime(iso: string): string {
     : esc(d.toLocaleString('ru-RU', { dateStyle: 'long', timeStyle: 'short' }));
 }
 
+/**
+ * Строка о том, чьей моделью обработан документ. Только удалённый провайдер:
+ * получатель отчёта должен видеть, что документ ушёл третьей стороне. Локальный
+ * запуск добавляет пустую строку — его HTML остаётся побайтно прежним.
+ */
+function providerLine(report: ReconciliationReport): string {
+  if (report.provider !== 'openrouter') return '';
+  return `
+    Обработано удалённой моделью: ${esc(report.model ?? '—')} (${esc(report.provider)})`;
+}
+
 const CSS = `
   :root {
     --ink: #1a1d21; --muted: #6b7280; --line: #e5e7eb;
@@ -189,7 +200,7 @@ export function buildHtmlReport(report: ReconciliationReport): string {
     Задание ${esc(report.id)} · сформирован ${fmtDateTime(report.createdAt)}<br>
     Период документов: ${dateIso(report.period.from)} — ${dateIso(report.period.to)}<br>
     Наши данные: ${esc(report.sides.ours.fileName)} (${report.sides.ours.rowsExtracted} строк) ·
-    Данные контрагента: ${esc(report.sides.partner.fileName)} (${report.sides.partner.rowsExtracted} строк)
+    Данные контрагента: ${esc(report.sides.partner.fileName)} (${report.sides.partner.rowsExtracted} строк)${providerLine(report)}
   </div>
 </header>
 

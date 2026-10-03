@@ -1,0 +1,24 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "Reconciliation AI" [level=1] [ref=e6]
+      - paragraph [ref=e7]: Сверка актов сверки с контрагентами
+    - generic "Локальная модель из settings.txt." [ref=e39]: "Модель: qwen2.5:7b-instruct"
+  - button "Настройки модели" [ref=e9] [cursor=pointer]
+  - tablist [ref=e13]:
+    - tab "Сверка" [ref=e14] [cursor=pointer]
+    - tab "Быстро" [active] [selected] [ref=e15] [cursor=pointer]
+  - generic [ref=e41]:
+    - generic [ref=e42]:
+      - heading "ИИ Анализ актов сверок" [level=2] [ref=e43]
+      - paragraph [ref=e44]: Загрузите два файла — ИИ извлечёт данные. Можно править вручную. А потом сравнит их.
+    - generic [ref=e45]:
+      - button "Файл А Перетащите файл или нажмите" [ref=e46] [cursor=pointer]:
+        - generic [ref=e50]: Файл А
+        - generic [ref=e51]: Перетащите файл или нажмите
+      - button "Файл Б Перетащите файл или нажмите" [ref=e52] [cursor=pointer]:
+        - generic [ref=e56]: Файл Б
+        - generic [ref=e57]: Перетащите файл или нажмите
+    - generic [ref=e58]:
+      - generic [ref=e59]: XLSX или PDF, до 50 МБ
+      - button "Анализировать" [disabled] [ref=e60]

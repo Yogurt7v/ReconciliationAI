@@ -1,4 +1,5 @@
 import type { AiDebugInfo } from '../api';
+import { AiDebugRows } from './AiDebugRows';
 
 interface DebugCardProps {
   debug: AiDebugInfo;
@@ -11,11 +12,7 @@ export function DebugCard({ debug }: DebugCardProps) {
         <h2 className="card-title">Диагностика AI</h2>
       </div>
       <div className="details-code-panel">
-        <div><strong>Модель:</strong> {debug.model}</div>
-        <div><strong>HTTP статус:</strong> {debug.httpStatus ?? '---'}</div>
-        <div><strong>Попыток:</strong> {debug.attempts}</div>
-        <div><strong>Длина ответа:</strong> {debug.contentLength} символов</div>
-        <div><strong>Ошибка:</strong> {debug.errorMessage ?? '---'}</div>
+        <AiDebugRows debug={debug} />
         {debug.rawPreview && (
           <div className="mt-2">
             <strong>Превью:</strong>

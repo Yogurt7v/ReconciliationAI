@@ -1,0 +1,27 @@
+- main [ref=f1e3]:
+  - generic [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - heading "Reconciliation AI" [level=1] [ref=f1e6]
+      - paragraph [ref=f1e7]: Сверка актов сверки с контрагентами
+    - generic "Локальная модель из settings.txt." [ref=f1e8]: "Модель: qwen2.5:7b-instruct"
+  - button "Настройки модели" [ref=f1e9] [cursor=pointer]
+  - tablist [ref=f1e13]:
+    - tab "Сверка" [selected] [ref=f1e14] [cursor=pointer]
+    - tab "Быстро" [ref=f1e15] [cursor=pointer]
+  - generic [ref=f1e16]:
+    - generic [ref=f1e17]:
+      - heading "Сверка актов" [level=2] [ref=f1e18]
+      - paragraph [ref=f1e19]: "Полный разбор с распознаванием сканов: определяется структура таблицы, извлекаются документы, выполняется сверка и строится отчёт."
+    - generic [ref=f1e20]:
+      - button "Наш файл Перетащите файл или нажмите" [ref=f1e21] [cursor=pointer]:
+        - generic [ref=f1e25]: Наш файл
+        - generic [ref=f1e26]: Перетащите файл или нажмите
+      - button "Файл контрагента Перетащите файл или нажмите" [ref=f1e27] [cursor=pointer]:
+        - generic [ref=f1e31]: Файл контрагента
+        - generic [ref=f1e32]: Перетащите файл или нажмите
+    - generic [ref=f1e33] [cursor=pointer]:
+      - checkbox "У контрагента двухсторонний акт (обе стороны в одном PDF)" [ref=f1e34]
+      - generic [ref=f1e35]: У контрагента двухсторонний акт (обе стороны в одном PDF)
+    - generic [ref=f1e36]:
+      - generic [ref=f1e37]: XLSX или PDF, до 50 МБ
+      - button "Начать сверку" [disabled] [ref=f1e38]

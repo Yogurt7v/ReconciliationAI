@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildReport } from '../src/services/reportBuilder.js';
 import type { ReportBuildInput } from '../src/services/reportBuilder.js';
+import { buildHtmlReport } from '../src/services/export/htmlReport.js';
 import type { ParsedRow, ParsedSide } from '@recon/shared';
 import { reconcileSides } from '../src/services/reconcile.js';
 
@@ -193,5 +194,79 @@ describe('buildReport', () => {
     });
     expect(withAi.hypotheses.some((h) => h.docNumber === '1')).toBe(true);
     expect(withAi.aiLogic.at(-1)!.title).toContain('Модель предложила гипотезы (1)');
+  });
+
+  /* ---- Подпись о провайдере: только удалённый запуск ---- */
+
+  it('локальный запуск: ни model, ни provider в отчёте', () => {
+    const ours = side('ours', [['1', '2026-03-01', '1000.00']]);
+    const partner = side('partner', [['1', '2026-03-01', '1000.00']]);
+
+    const report = buildReport(baseInput(ours, partner));
+    // Ключи отсутствуют, а не равны null: иначе в JSON появилось бы поле,
+    // которого в побайтно прежнем локальном отчёте не было
+    expect('model' in report).toBe(false);
+    expect('provider' in report).toBe(false);
+  });
+
+  it('удалённый запуск: отчёт называет провайдера и модель', () => {
+    const ours = side('ours', [['1', '2026-03-01', '1000.00']]);
+    const partner = side('partner', [['1', '2026-03-01', '1000.00']]);
+
+    const report = buildReport({
+      ...baseInput(ours, partner),
+      provider: 'openrouter',
+      model: 'vendor/model:free',
+    });
+    expect(report.provider).toBe('openrouter');
+    expect(report.model).toBe('vendor/model:free');
+  });
+
+  it('провайдер без модели подпись не ставит — неполная подпись хуже её отсутствия', () => {
+    const ours = side('ours', [['1', '2026-03-01', '1000.00']]);
+    const partner = side('partner', [['1', '2026-03-01', '1000.00']]);
+
+    const report = buildReport({ ...baseInput(ours, partner), provider: 'openrouter' });
+    expect('model' in report).toBe(false);
+    expect('provider' in report).toBe(false);
+  });
+
+  it('подпись удалённого запуска не содержит ключа оператора', () => {
+    const ours = side('ours', [['1', '2026-03-01', '1000.00']]);
+    const partner = side('partner', [['1', '2026-03-01', '1000.00']]);
+
+    const report = buildReport({
+      ...baseInput(ours, partner),
+      provider: 'openrouter',
+      model: 'vendor/model:free',
+    });
+    expect(JSON.stringify(report)).not.toMatch(/sk-|apiKey|api_key/i);
+  });
+});
+
+/* ------------------------------ HTML-экспорт ------------------------------ */
+
+describe('buildHtmlReport: подпись о провайдере', () => {
+  function html(extra: Partial<ReportBuildInput> = {}): string {
+    const ours = side('ours', [['1', '2026-03-01', '1000.00']]);
+    const partner = side('partner', [['1', '2026-03-01', '1000.00']]);
+    return buildHtmlReport(buildReport({ ...baseInput(ours, partner), ...extra }));
+  }
+
+  it('локальный запуск: строки о провайдере нет вовсе', () => {
+    expect(html()).not.toMatch(/openrouter|OpenRouter|Обработано удалённой/i);
+  });
+
+  it('удалённый запуск: строка называет модель и провайдера', () => {
+    const out = html({ provider: 'openrouter', model: 'vendor/model:free' });
+    expect(out).toContain('Обработано удалённой моделью');
+    expect(out).toContain('vendor/model:free');
+    expect(out).toContain('openrouter');
+  });
+
+  it('идентификатор модели экранируется, а не вставляется сырым', () => {
+    const out = html({ provider: 'openrouter', model: 'a/<b>' });
+    expect(out).toContain('a/&lt;b&gt;');
+    expect(out).not.toContain('a/<b>');
   });
 });

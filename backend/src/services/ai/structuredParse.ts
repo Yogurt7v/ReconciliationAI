@@ -270,10 +270,13 @@ function partyToParsedSide(
 /**
  * Парсит двухсторонний акт сверки через AI.
  *
- * @param config — конфиг AI (API key + модель)
+ * @param config — конфигурация вызова AI: провайдер, адрес, модель и таймаут
+ *   (у удалённого провайдера дополнительно ключ оператора)
  * @param pdfText — текст PDF-файла
  * @param fileName — имя файла для метаданных
- * @returns AiStructuredResult или null при ошибке
+ * @returns AiStructuredResult или null при ошибке. Отказ удалённого провайдера,
+ *   который повтор не исправит, **не** возвращается как null, а бросается
+ *   наружу: см. комментарий в catch ниже.
  */
 export async function parseTwoSidedPdf(
   config: AiConfig,
@@ -312,6 +315,18 @@ export async function parseTwoSidedPdf(
 
     return { ours, partner, raw };
   } catch (err) {
+    // Деградация — ответ на «модель не ответила», а не на «провайдер отказал».
+    // Отвергнутый ключ, отсутствие денег и несуществующая модель не чинятся ни
+    // повтором, ни вторым попытком распознавания: тот же отказ на втором проходе
+    // повторится, и оператор заплатит за два одинаковых запроса, не получив
+    // даже намёка на причину. Поэтому такие ошибки идут дальше по цепочке, и
+    // пайплайн роняет задание с названной причиной.
+    //
+    // Локальная модель сюда не попадает: её отказ оператор чинит сам, путь
+    // «вернуться к стандартному разбору» для неё остаётся ровно прежним.
+    if (config.provider === 'openrouter' && err instanceof AiUnavailableError && err.terminal) {
+      throw err;
+    }
     if (err instanceof AiUnavailableError) return null;
     console.error('[structuredParse] Unexpected error:', err);
     return null;

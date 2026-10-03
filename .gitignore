@@ -8,6 +8,7 @@ dist-portable/
 
 # Настройки приложения: settings.example.txt — шаблон, settings.txt — живая копия
 settings.txt
+.env
 
 # Артефакты выполнения
 uploads/
@@ -28,5 +29,5 @@ test/*
 
 # Служебные данные агентов (OpenCode, OhMyOpenCode, OpenRouter) — не коммитим
 .openrouter/*
-.omo/*
-.opencode/*
+.omo
+.opencode

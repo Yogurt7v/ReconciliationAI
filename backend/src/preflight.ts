@@ -12,8 +12,31 @@ import type { Settings } from './settings.js';
 
 export type OllamaCheck =
   | { ok: true; models: string[] }
-  | { ok: false; reason: 'unreachable'; detail: string }
+  // causeCode — код сетевой ошибки из err.cause.code ('ECONNREFUSED', 'ENOTFOUND').
+  // Он различает «Ollama не запущена» и «Ollama не ответила»: в detail обе причины
+  // выглядят одинаково («fetch failed»), и сверка по тексту зависит от локали.
+  | { ok: false; reason: 'unreachable'; detail: string; causeCode?: string }
   | { ok: false; reason: 'model-missing'; detail: string; models: string[] };
+
+/**
+ * Код сетевой ошибки из err.cause.
+ *
+ * Текст ошибки не разбираем: он зависит от локали и версии Node. Берём код, потому
+ * что он единственный признак, по которому «не запущена» отличается от «не ответила».
+ * Node при двойном стеке (localhost резолвится и в IPv6, и в IPv4) оборачивает
+ * отказ в AggregateError: сам агрегат код может не нести, тогда смотрим errors[0].
+ */
+function causeCodeOf(err: unknown): string | undefined {
+  const cause = (err as { cause?: unknown } | null | undefined)?.cause;
+  if (typeof cause !== 'object' || cause === null) return undefined;
+
+  const aggregate = cause as { code?: unknown; errors?: unknown };
+  if (typeof aggregate.code === 'string') return aggregate.code;
+
+  const first = Array.isArray(aggregate.errors) ? (aggregate.errors as unknown[])[0] : undefined;
+  const nested = (first as { code?: unknown } | null | undefined)?.code;
+  return typeof nested === 'string' ? nested : undefined;
+}
 
 /** Имя модели в тегах Ollama: «qwen2.5:7b-instruct» → «qwen2.5:7b-instruct» */
 function baseTag(model: string): string {
@@ -57,6 +80,7 @@ export async function checkOllama(
       ok: false,
       reason: 'unreachable',
       detail: err instanceof Error ? err.message : String(err),
+      causeCode: causeCodeOf(err),
     };
   } finally {
     clearTimeout(timer);

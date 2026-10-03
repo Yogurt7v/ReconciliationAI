@@ -27,8 +27,8 @@ import { buildPreview, columnStats } from '../services/heuristics.js';
 import { applyMapping } from '../services/applyMapping.js';
 import { assistStructure } from '../services/ai/structureAssist.js';
 import { aiHypotheses } from '../services/ai/hypotheses.js';
-import { aiConfigFromSettings, aiProgressText } from '../services/ai/client.js';
-import type { AiProgressCallback, AiProgressEvent } from '../services/ai/client.js';
+import { AiUnavailableError, aiConfigFromSettings, aiProgressText, remoteProviderCause } from '../services/ai/client.js';
+import type { AiConfig, AiProgressCallback, AiProgressEvent } from '../services/ai/client.js';
 import type { Settings } from '../settings.js';
 import { reconcileSides } from '../services/reconcile.js';
 import type { ReconcileCoreResult } from '../services/reconcile.js';
@@ -122,6 +122,13 @@ function checkCancelled(job: Job): void {
   if (job.cancelRequested) throw new CancelledError();
 }
 
+/**
+ * Как назвать удалённого провайдера в «Логике AI» и в отчёте: оператор должен
+ * видеть, чей адрес обработал документ. Литерал, а не ссылка на клиент — в
+ * этой строке ключа быть не должно никогда.
+ */
+const REMOTE_PROVIDER_NAME = 'OpenRouter';
+
 /* ------------------------------ Разбор файлов ----------------------------- */
 
 function logRawSource(label: string, source: RawSource): void {
@@ -152,11 +159,19 @@ function summarizeReconcile(result: ReconcileCoreResult): string {
 
 /**
  * Определяет структуру стороны и решает, нужно ли подтверждение.
+ *
+ * `config` — модель этого запуска. Раньше стадия брала `Settings` и собирала
+ * конфиг внутри `assistStructure`, из-за чего на удалённом профиле именно
+ * определение структуры продолжало работать на локальной Ollama.
+ *
+ * Экспортируется ради теста распространения терминальной ошибки: до того как
+ * runPipeline примет конфиг запуска (задача 6 плана), стадия недостижима для
+ * удалённого профиля иначе.
  */
-async function resolveStructure(
+export async function resolveStructure(
   job: Job,
   role: SideRole,
-  settings: Settings,
+  config: AiConfig,
   onProgress?: AiProgressCallback,
 ): Promise<void> {
   const source = job.sources[role];
@@ -168,7 +183,7 @@ async function resolveStructure(
   const innerDone = role === 'ours' ? 0.45 : 0.95;
 
   updateStage(job, 'structure', `Определение структуры: ${label}…`, innerStart);
-  const { mapping, aiUsed } = await assistStructure(source.grid, settings, onProgress);
+  const { mapping, aiUsed, terminalError } = await assistStructure(source.grid, config, onProgress);
   job.mappings[role] = mapping;
   updateStage(
     job,
@@ -197,6 +212,23 @@ async function resolveStructure(
       .join(' '),
     mapping.confidence,
   );
+
+  // Провайдер отказал так, что повтор и эвристика не помогут. Задание должно
+  // упасть с названной причиной, а не продолжить и выдать отчёт, посчитанный
+  // не той моделью, что выбрал оператор. Бросок ловит общий catch пайплайна —
+  // отдельной стадии «failed» здесь не нужно.
+  if (terminalError) {
+    throw new AiUnavailableError(
+      remoteProviderCause({
+        status: terminalError.status ?? undefined,
+        errorType: terminalError.errorType,
+        detail: terminalError.message,
+      }),
+      terminalError.message,
+      terminalError.status ?? undefined,
+      terminalError.errorType,
+    );
+  }
 
   const missing = missingRequiredFields(mapping.columns);
   const lowConfidence = mapping.confidence < CONFIDENCE_THRESHOLD;
@@ -231,10 +263,10 @@ function waitForConfirmation(job: Job): Promise<void> {
 async function ensureConfirmedStructure(
   job: Job,
   role: SideRole,
-  settings: Settings,
+  config: AiConfig,
   onProgress?: AiProgressCallback,
 ): Promise<void> {
-  await resolveStructure(job, role, settings, onProgress);
+  await resolveStructure(job, role, config, onProgress);
   while (
     !job.cancelRequested &&
     job.pendingConfirmation !== null &&
@@ -275,9 +307,33 @@ function extractSide(job: Job, role: SideRole): ParsedSide {
 
 /* ------------------------------- Пайплайн --------------------------------- */
 
-export async function runPipeline(jobId: string, settings: Settings): Promise<void> {
+/**
+ * Прогоняет задание от загрузки до отчёта.
+ *
+ * Третий аргумент — модель этого запуска, разобранная из профиля, присланного
+ * браузером (`routes/jobs.ts`). Параметр опциональный: без него поведение
+ * побайтно прежнее — локальная модель из settings.txt, — поэтому вызовы с
+ * двумя аргументами (тесты, смоук) остаются верными.
+ *
+ * Конфиг разрешается один раз на запуск и переиспользуется всеми стадиями.
+ * Собирать его заново внутри стадии опасно: стадия `structure` так делала и
+ * молча работала на локальной модели, пока оператор считал, что выбрал шлюз.
+ */
+export async function runPipeline(
+  jobId: string,
+  settings: Settings,
+  runAiConfig?: AiConfig,
+): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error(`Задание ${jobId} не найдено`);
+
+  const aiConfig = runAiConfig ?? aiConfigFromSettings(settings);
+
+  // Ссылка на модель запуска попадает в отчёт только для удалённого провайдера:
+  // получатель документа должен видеть, что обрабатывала его третья сторона.
+  // Локальный запуск остаётся побайтно прежним — ни model, ни provider.
+  const runAttribution: { model?: string; provider?: AiConfig['provider'] } =
+    aiConfig.provider === 'openrouter' ? { model: aiConfig.model, provider: aiConfig.provider } : {};
 
   let coreResult: ReconcileCoreResult | null = null;
   let oursParsed: ParsedSide | null = null;
@@ -319,7 +375,15 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
 
     // Телеметрия AI-вызовов: модель может думать десятки секунд — показываем
     // это в статусе, иначе пользователь решает, что процесс завис.
-    const aiEvent = (ev: AiProgressEvent): void => updateMessage(job, aiProgressText(ev));
+    //
+    // Тем же каналом пишется и модель, которая ответила: успешное событие
+    // приходит ровно тогда, когда модель вернула пригодный ответ, и `Job`
+    // получает её имя вместо запрошенного. Отдельный обратный вызов в каждом
+    // из четырёх мест AI не потребовал бы — все они уже получают `onProgress`.
+    const aiEvent = (ev: AiProgressEvent): void => {
+      updateMessage(job, aiProgressText(ev));
+      if (ev.phase === 'success' && ev.effectiveModel) job.effectiveModel = ev.effectiveModel;
+    };
 
     /* --------------------- двухсторонний PDF (AI) ----------------------- */
     // Двусторонний акт: пользователь галочкой указал, что файл контрагента
@@ -328,7 +392,6 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
     if (job.twoSidedRequested) {
       const partnerIsTextPdf = partnerSource.kind === 'pdf-text' && !partnerSource.needsOcr;
       if (partnerIsTextPdf) {
-        const aiConfig = aiConfigFromSettings(settings);
         updateStage(job, 'parsing', 'Распознавание двухстороннего акта через AI…', 0.7);
         const twoSided = await detectTwoSidedPdf(
           partnerSource,
@@ -370,7 +433,6 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
     if (!partnerParsed) {
       const oursIsTextPdf = oursSource.kind === 'pdf-text' && !oursSource.needsOcr;
       if (oursIsTextPdf) {
-        const aiConfig = aiConfigFromSettings(settings);
         updateStage(job, 'parsing', 'Распознавание акта сверки через AI…', 0.7);
         const twoSided = await detectTwoSidedPdf(
           oursSource,
@@ -450,6 +512,7 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
         core: coreResult,
         hypothesesAi: null,
         aiLogic: job.reasoningLog,
+        ...runAttribution,
       });
       job.report = report;
       job.reportReady = true;
@@ -462,10 +525,10 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
     updateStage(job, 'structure', 'Определение структуры таблиц…', 0.02);
 
     // Стороны обрабатываются последовательно: каждая может запросить подтверждение
-    await ensureConfirmedStructure(job, 'ours', settings, aiEvent);
+    await ensureConfirmedStructure(job, 'ours', aiConfig, aiEvent);
     checkCancelled(job);
     if (!partnerParsed) {
-      await ensureConfirmedStructure(job, 'partner', settings, aiEvent);
+      await ensureConfirmedStructure(job, 'partner', aiConfig, aiEvent);
       checkCancelled(job);
     }
 
@@ -502,9 +565,8 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
     /* ------------------------------ analysis ---------------------------- */
     checkCancelled(job);
     updateStage(job, 'analysis', 'Формирование отчёта…', 0.2);
-    const config = aiConfigFromSettings(settings);
     updateStage(job, 'analysis', 'AI анализирует расхождения и готовит гипотезы…', 0.5);
-    const hypothesesAi = await aiHypotheses(config, {
+    const hypothesesAi = await aiHypotheses(aiConfig, {
       summary: {
         ourTotal: oursParsed.rows.length,
         partnerTotal: partnerParsed.rows.length,
@@ -524,6 +586,18 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
       },
     }, aiEvent);
 
+    // Модель не ответила, а задание продолжается: отчёт не должен выглядеть
+    // так, будто выбранная оператором модель отработала. Только удалённый
+    // провайдер — локальный запуск получает ровно прежние шаги.
+    if (aiConfig.provider === 'openrouter' && hypothesesAi === null) {
+      pushStep(
+        job,
+        'analysis',
+        `Удалённая модель ${aiConfig.model} (${REMOTE_PROVIDER_NAME}) не ответила на запрос гипотез`,
+        'Гипотезы взяты из детерминированных правил: на точность арифметики сверки это не влияет, но отчёт обработан не той моделью, что выбрана в настройках.',
+      );
+    }
+
     updateStage(job, 'analysis', 'Генерация итогового отчёта…', 0.85);
     const report = buildReport({
       jobId: job.id,
@@ -532,6 +606,7 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
       core: coreResult,
       hypothesesAi,
       aiLogic: job.reasoningLog,
+      ...runAttribution,
     });
 
     job.report = report;
@@ -545,9 +620,30 @@ export async function runPipeline(jobId: string, settings: Settings): Promise<vo
       return;
     }
     job.stage = 'failed';
-    job.error = err instanceof Error ? err.message : String(err);
+    // Названная причина отказа удалённого шлюза — одна строка на все три входа
+    // с AI-вызовом, поэтому документация может сослаться на неё дословно.
+    // Локальный провайдер её не проходит: там отказ чинит оператор у себя, и
+    // текст ошибки остаётся ровно прежним.
+    const remoteRefusal = aiConfig.provider === 'openrouter' && err instanceof AiUnavailableError;
+    job.error = remoteRefusal
+      ? remoteProviderCause(err)
+      : err instanceof Error
+        ? err.message
+        : String(err);
     job.message = 'Ошибка обработки';
-    pushStep(job, 'failed', 'Задание завершилось ошибкой', job.error);
+    // Шаг называет провайдера и модель: по статусу видно лишь «ошибка», и какой
+    // адрес отказал — из текста статуса не узнать. Причина — в detail, который
+    // провайдер мог дополнить своим объяснением. Стадия `failed` и назначение
+    // статуса остаются как прежде; меняется только текст шага.
+    const cause = err instanceof AiUnavailableError ? (err.detail ?? job.error) : job.error;
+    pushStep(
+      job,
+      'failed',
+      aiConfig.provider === 'openrouter'
+        ? `Задание завершилось ошибкой: ${REMOTE_PROVIDER_NAME}, модель ${aiConfig.model}`
+        : 'Задание завершилось ошибкой',
+      cause,
+    );
   } finally {
     // Освобождаем буферы — они больше не нужны после формирования отчёта
     job.buffers = { ours: Buffer.alloc(0), partner: Buffer.alloc(0) };

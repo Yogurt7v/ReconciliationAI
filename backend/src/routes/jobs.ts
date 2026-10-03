@@ -9,6 +9,10 @@
  *   GET    /api/jobs/:id/report   — отчёт в JSON
  *   GET    /api/jobs/:id/report.html — отчёт в HTML
  *
+ * Здесь же две проверки подключения для окна настроек модели:
+ *   POST   /api/ai/verify         — ключ OpenRouter и наличие модели в каталоге
+ *   GET    /api/ollama/status     — доступность локальной модели прямо сейчас
+ *
  * Задания живут в памяти (см. jobs/store.ts) и удаляются по TTL.
  */
 
@@ -24,6 +28,9 @@ import type { Settings } from '../settings.js';
 import { runPipeline } from '../jobs/pipeline.js';
 import { confirmMapping, createJob, getJob, requestCancel, toStatus } from '../jobs/store.js';
 import { buildHtmlReport } from '../services/export/htmlReport.js';
+import { aiConfigFromRemoteProfile, aiConfigFromSettings, type AiConfig } from '../services/ai/client.js';
+import { resolveClientProfile, type ProfileRejection } from '../services/ai/profile.js';
+import { checkLocalAvailability, verifyRemoteProfile } from '../services/ai/verify.js';
 
 /** backend/src/routes → ../../reports */
 const REPORTS_DIR = fileURLToPath(new URL('../../reports', import.meta.url));
@@ -59,6 +66,54 @@ function fileProblem(file: SideUpload): string | null {
   return null;
 }
 
+/**
+ * Поля запроса, которыми браузер выбирает удалённую модель. Одно и то же имя
+ * в multipart-запросе и в JSON-теле: фронтенд собирает профиль в одном месте,
+ * и разные имена в двух форматах означали бы, что маршруты разъезжаются.
+ */
+export interface RequestAiProfileInput {
+  aiModel?: unknown;
+  aiApiKey?: unknown;
+}
+
+export type RequestAiConfig =
+  | { ok: true; config: AiConfig }
+  | { ok: false; message: string; reason: ProfileRejection };
+
+/**
+ * Превращает поля запроса в конфигурацию модели этого запуска.
+ *
+ * Единственное место, где профиль из запроса становится `AiConfig`: три
+ * маршрута с AI-вызовом (`/api/jobs`, `/api/test/analyze`, `/api/compare`)
+ * пользуются этой функцией, поэтому правило «профиль настоящий — работает
+ * удалённый шлюз, профиля нет — работает локальная Ollama» не может
+ * разойтись между ними.
+ *
+ * Отсутствие полей — не ошибка, а прежнее поведение: конфиг собирается из
+ * settings.txt, и запрос с ним уходит на локальную модель побайтно так же,
+ * как до появления профилей. Половина профиля (модель без ключа или наоборот) —
+ * уже не отсутствие, а ошибка оператора, и она возвращается названной
+ * причиной: тихий возврат к локальной модели отправил бы документ не туда,
+ * куда оператор выбрал, и тот об этом не узнал бы.
+ */
+export function resolveRequestAiConfig(
+  input: RequestAiProfileInput,
+  settings: Pick<Settings, 'ollamaBaseUrl' | 'ollamaModel' | 'aiTimeoutSec'>,
+): RequestAiConfig {
+  if (input.aiModel === undefined && input.aiApiKey === undefined) {
+    return { ok: true, config: aiConfigFromSettings(settings) };
+  }
+
+  const resolution = resolveClientProfile(
+    { model: input.aiModel, apiKey: input.aiApiKey },
+    { timeoutMs: settings.aiTimeoutSec * 1000 },
+  );
+
+  return resolution.ok
+    ? { ok: true, config: aiConfigFromRemoteProfile(resolution.profile) }
+    : { ok: false, message: resolution.message, reason: resolution.reason };
+}
+
 export async function registerJobRoutes(
   app: FastifyInstance,
   settings: Settings,
@@ -69,6 +124,8 @@ export async function registerJobRoutes(
     let ours: SideUpload | null = null;
     let partner: SideUpload | null = null;
     let twoSidedRequested = false;
+    let aiModel: unknown;
+    let aiApiKey: unknown;
 
     try {
       for await (const part of req.parts()) {
@@ -78,6 +135,10 @@ export async function registerJobRoutes(
           partner = await readSide(part);
         } else if (part.type === 'field' && part.fieldname === 'twoSided') {
           twoSidedRequested = part.value === 'true' || part.value === '1';
+        } else if (part.type === 'field' && part.fieldname === 'aiModel') {
+          aiModel = part.value;
+        } else if (part.type === 'field' && part.fieldname === 'aiApiKey') {
+          aiApiKey = part.value;
         }
       }
     } catch (err) {
@@ -100,12 +161,18 @@ export async function registerJobRoutes(
       if (problem) return reply.code(400).send({ error: problem });
     }
 
+    const ai = resolveRequestAiConfig({ aiModel, aiApiKey }, settings);
+    if (!ai.ok) {
+      return reply.code(400).send({ error: ai.message, reason: ai.reason });
+    }
+
     let job;
     try {
       job = createJob(
         { ours: ours.filename, partner: partner.filename },
         { ours: ours.buffer, partner: partner.buffer },
         twoSidedRequested,
+        { provider: ai.config.provider, model: ai.config.model },
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не удалось создать задание.';
@@ -113,7 +180,7 @@ export async function registerJobRoutes(
     }
 
     // Пайплайн идёт в фоне: клиент следит за прогрессом опросом статуса.
-    void runPipeline(job.id, settings).catch((err) => {
+    void runPipeline(job.id, settings, ai.config).catch((err) => {
       req.log.error({ err, jobId: job.id }, 'Pipeline crashed');
     });
 
@@ -201,5 +268,43 @@ export async function registerJobRoutes(
     }
 
     return reply.type('text/html; charset=utf-8').send(html);
+  });
+
+  /* ---------------------- Проверки подключения (окно настроек) ------------ */
+
+  /**
+   * POST /api/ai/verify — бесплатная проверка ключа и идентификатора модели.
+   *
+   * Тело — JSON `{ model, apiKey }`, ответ — вердикт и текст для диалога.
+   * Проверки не вызывают модель и не тратят кредит, поэтому оператор узнаёт об
+   * опечатке в модели или отвергнутом ключе за секунды, а не посреди пайплайна.
+   *
+   * На отказ профиля — 400 с названной причиной, а не тихий возврат к локальной
+   * модели: оператор верит, что выбрал OpenRouter, и не должен отправить документ
+   * локальной модели вместо этого.
+   *
+   * Ключ не выходит наружу: он уходит только в заголовок Authorization запроса к
+   * /key, а в ответе, сообщении и логе не встречается — вся разборка и все тексты
+   * живут в services/ai/verify.ts.
+   */
+  app.post('/api/ai/verify', async (req, reply) => {
+    const resolution = resolveClientProfile(req.body, { timeoutMs: settings.aiTimeoutSec * 1000 });
+    if (!resolution.ok) {
+      return reply.code(400).send({ error: resolution.message, reason: resolution.reason });
+    }
+
+    return reply.send(await verifyRemoteProfile(resolution.profile));
+  });
+
+  /**
+   * GET /api/ollama/status — доступность локальной модели «сейчас».
+   *
+   * GET ограничителем частоты не считается, поэтому окно зовёт маршрут при каждом
+   * открытии. Ни один вердикт не запрещает запуск задания: локальная модель —
+   * вариант по умолчанию, и её недоступность приложение переживает деградацией к
+   * правилам.
+   */
+  app.get('/api/ollama/status', async (_req, reply) => {
+    return reply.send(await checkLocalAvailability(settings));
   });
 }
